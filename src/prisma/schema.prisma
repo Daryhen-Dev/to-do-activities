@@ -1,0 +1,136 @@
+generator client {
+  provider = "prisma-client-js" // legacy — pinned for Next 16 Turbopack compat
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  categories    Category[]
+  planningItems PlanningItem[]
+
+  @@map("users")
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  color     String?
+  icon      String?
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lists List[]
+
+  @@index([userId])
+  @@map("categories")
+}
+
+model List {
+  id         String   @id @default(cuid())
+  categoryId String
+  name       String
+  sortOrder  Int      @default(0) @map("sort_order")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  category      Category       @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  planningItems PlanningItem[]
+
+  @@index([categoryId])
+  @@map("lists")
+}
+
+model ItemType {
+  id                 String   @id @default(cuid())
+  key                String   @unique
+  name               String
+  color              String?
+  icon               String?
+  sortOrder          Int      @default(0) @map("sort_order")
+  active             Boolean  @default(true)
+  isDefault          Boolean  @default(false) @map("is_default")
+  requiresCompletion Boolean  @default(false) @map("requires_completion")
+  allowsRepetition   Boolean  @default(false) @map("allows_repetition")
+  allowsProgress     Boolean  @default(false) @map("allows_progress")
+  allowsChecklist    Boolean  @default(false) @map("allows_checklist")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  planningItems PlanningItem[]
+
+  @@map("item_types")
+}
+
+model Priority {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  name      String
+  color     String?
+  icon      String?
+  sortOrder Int      @default(0) @map("sort_order")
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  planningItems PlanningItem[]
+
+  @@map("priorities")
+}
+
+model Status {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  name      String
+  color     String?
+  icon      String?
+  sortOrder Int      @default(0) @map("sort_order")
+  active    Boolean  @default(true)
+  isDefault Boolean  @default(false) @map("is_default")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  planningItems PlanningItem[]
+
+  @@map("statuses")
+}
+
+model PlanningItem {
+  id          String    @id @default(cuid())
+  userId      String
+  listId      String?
+  itemTypeId  String
+  priorityId  String?
+  statusId    String
+  title       String
+  description String?
+  dueAt       DateTime? @map("due_at")
+  archived    Boolean   @default(false)
+  deletedAt   DateTime? @map("deleted_at")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  list     List?     @relation(fields: [listId], references: [id], onDelete: SetNull)
+  itemType ItemType  @relation(fields: [itemTypeId], references: [id], onDelete: Restrict)
+  priority Priority? @relation(fields: [priorityId], references: [id], onDelete: SetNull)
+  status   Status    @relation(fields: [statusId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([listId])
+  @@index([itemTypeId])
+  @@index([statusId])
+  @@index([priorityId])
+  @@index([userId, archived, deletedAt])
+  @@map("planning_items")
+}
