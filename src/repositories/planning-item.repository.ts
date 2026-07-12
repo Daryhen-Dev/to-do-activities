@@ -61,10 +61,10 @@ export async function findDefaultStatusId(): Promise<string | null> {
   return status?.id ?? null;
 }
 
-/** Id of the ItemType row matching `key`, or null if unseeded. */
-export async function findItemTypeIdByKey(key: string): Promise<string | null> {
-  const itemType = await prisma.itemType.findUnique({
-    where: { key },
+/** Id of the single ItemType row flagged `isDefault: true`, or null if unseeded. */
+export async function findDefaultItemTypeId(): Promise<string | null> {
+  const itemType = await prisma.itemType.findFirst({
+    where: { isDefault: true },
     select: { id: true },
   });
   return itemType?.id ?? null;

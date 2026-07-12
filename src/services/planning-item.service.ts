@@ -3,18 +3,11 @@ import { getCurrentUserId } from "../lib/current-user";
 import { NotFoundError } from "../lib/errors";
 import {
   createPlanningItem,
+  findDefaultItemTypeId,
   findDefaultStatusId,
-  findItemTypeIdByKey,
   listPlanningItemsByUser,
 } from "../repositories/planning-item.repository";
 import type { CreatePlanningItemInput } from "../validators/planning-item.schema";
-
-/**
- * ItemType has no `isDefault` flag (unlike Status), so when the request
- * omits `itemTypeId` we fall back to this seeded key. See
- * `src/prisma/seed.ts` for the ItemType rows.
- */
-const DEFAULT_ITEM_TYPE_KEY = "tarea";
 
 /**
  * Business rules for creating a planning item: resolves the acting user
@@ -36,11 +29,10 @@ export async function createPlanningItemForCurrentUser(
     );
   }
 
-  const itemTypeId =
-    input.itemTypeId ?? (await findItemTypeIdByKey(DEFAULT_ITEM_TYPE_KEY));
+  const itemTypeId = input.itemTypeId ?? (await findDefaultItemTypeId());
   if (!itemTypeId) {
     throw new NotFoundError(
-      `Default item type "${DEFAULT_ITEM_TYPE_KEY}" is not seeded. Run the seed script before creating items.`,
+      "No default item type is configured. Run the seed script before creating items.",
     );
   }
 
