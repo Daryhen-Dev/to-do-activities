@@ -52,20 +52,33 @@ export async function listPlanningItemsByUser(
   });
 }
 
-/** Id of the single Status row flagged `isDefault: true`, or null if unseeded. */
+/**
+ * Id of the single Status row flagged `isDefault: true`, or null if unseeded.
+ * A partial unique index (see the `single_default_partial_unique` migration)
+ * guarantees at most one such row at the database level; `orderBy` here is a
+ * belt-and-suspenders tie-break in case that invariant is ever bypassed.
+ */
 export async function findDefaultStatusId(): Promise<string | null> {
   const status = await prisma.status.findFirst({
     where: { isDefault: true },
     select: { id: true },
+    orderBy: { sortOrder: "asc" },
   });
   return status?.id ?? null;
 }
 
-/** Id of the single ItemType row flagged `isDefault: true`, or null if unseeded. */
+/**
+ * Id of the single ItemType row flagged `isDefault: true`, or null if
+ * unseeded. A partial unique index (see the `single_default_partial_unique`
+ * migration) guarantees at most one such row at the database level;
+ * `orderBy` here is a belt-and-suspenders tie-break in case that invariant
+ * is ever bypassed.
+ */
 export async function findDefaultItemTypeId(): Promise<string | null> {
   const itemType = await prisma.itemType.findFirst({
     where: { isDefault: true },
     select: { id: true },
+    orderBy: { sortOrder: "asc" },
   });
   return itemType?.id ?? null;
 }

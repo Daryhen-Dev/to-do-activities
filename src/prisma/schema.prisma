@@ -51,6 +51,10 @@ model List {
   @@map("lists")
 }
 
+/// At most one row may have isDefault = true. Prisma's schema DSL cannot
+/// express a partial unique index, so this invariant is enforced via a
+/// hand-written migration (see
+/// `migrations/20260713005908_single_default_partial_unique`), not here.
 model ItemType {
   id                 String   @id @default(cuid())
   key                String   @unique
@@ -88,6 +92,10 @@ model Priority {
   @@map("priorities")
 }
 
+/// At most one row may have isDefault = true. Prisma's schema DSL cannot
+/// express a partial unique index, so this invariant is enforced via a
+/// hand-written migration (see
+/// `migrations/20260713005908_single_default_partial_unique`), not here.
 model Status {
   id        String   @id @default(cuid())
   key       String   @unique
