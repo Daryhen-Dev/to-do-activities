@@ -3,6 +3,8 @@ import { DEV_USER_ID } from "../lib/current-user";
 import { prisma } from "../lib/prisma";
 import {
   createPlanningItem,
+  findDefaultItemTypeId,
+  findDefaultStatusId,
   listPlanningItemsByUser,
 } from "./planning-item.repository";
 
@@ -17,6 +19,7 @@ describe("planning-item repository (integration)", () => {
   let statusId: string;
   const createdItemIds: string[] = [];
   let otherUserId: string | null = null;
+  const throwawayUserIds: string[] = [];
 
   beforeAll(async () => {
     const itemType = await prisma.itemType.findFirstOrThrow({
@@ -38,6 +41,9 @@ describe("planning-item repository (integration)", () => {
     if (otherUserId) {
       // Cascades and removes any planning items owned by this throwaway user.
       await prisma.user.delete({ where: { id: otherUserId } });
+    }
+    if (throwawayUserIds.length > 0) {
+      await prisma.user.deleteMany({ where: { id: { in: throwawayUserIds } } });
     }
   });
 
@@ -126,5 +132,36 @@ describe("planning-item repository (integration)", () => {
     const ids = items.map((item) => item.id);
 
     expect(ids).not.toContain(otherUsersItem.id);
+  });
+
+  it("resolves the seeded default item type id (key: tarea), exercising the real Prisma query", async () => {
+    const seededDefault = await prisma.itemType.findUniqueOrThrow({
+      where: { key: "tarea" },
+    });
+
+    const resolvedId = await findDefaultItemTypeId();
+
+    expect(resolvedId).toBe(seededDefault.id);
+  });
+
+  it("resolves the seeded default status id (isDefault: true), exercising the real Prisma query", async () => {
+    const seededDefault = await prisma.status.findFirstOrThrow({
+      where: { isDefault: true },
+    });
+
+    const resolvedId = await findDefaultStatusId();
+
+    expect(resolvedId).toBe(seededDefault.id);
+  });
+
+  it("returns an empty list for a freshly created user with zero items", async () => {
+    const freshUser = await prisma.user.create({
+      data: { email: `empty-list-${Date.now()}@test.local` },
+    });
+    throwawayUserIds.push(freshUser.id);
+
+    const items = await listPlanningItemsByUser(freshUser.id);
+
+    expect(items).toEqual([]);
   });
 });

@@ -40,6 +40,28 @@ describe("createPlanningItemSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("rejects a whitespace-only title", () => {
+    const result = createPlanningItemSchema.safeParse({ title: "   " });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a title longer than 500 characters", () => {
+    const result = createPlanningItemSchema.safeParse({
+      title: "a".repeat(501),
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a title exactly 500 characters long", () => {
+    const result = createPlanningItemSchema.safeParse({
+      title: "a".repeat(500),
+    });
+
+    expect(result.success).toBe(true);
+  });
+
   it("ignores a userId field if present (not part of the schema)", () => {
     const result = createPlanningItemSchema.safeParse({
       title: "Buy milk",

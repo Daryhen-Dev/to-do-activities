@@ -13,6 +13,8 @@ interface PlanningItemResponse {
   id: string;
   title: string;
   listId: string | null;
+  itemTypeId: string;
+  statusId: string;
 }
 
 function postRequest(body: unknown): Request {
@@ -37,12 +39,19 @@ describe("planning-items route (integration, real DB)", () => {
   it("creates an item via POST and returns it in a subsequent GET, scoped to the dev user", async () => {
     const uniqueTitle = `E2E route test ${Date.now()}`;
 
+    const [seededDefaultItemType, seededDefaultStatus] = await Promise.all([
+      prisma.itemType.findFirstOrThrow({ where: { isDefault: true } }),
+      prisma.status.findFirstOrThrow({ where: { isDefault: true } }),
+    ]);
+
     const postResponse = await POST(postRequest({ title: uniqueTitle }));
     expect(postResponse.status).toBe(201);
     const created = (await postResponse.json()) as PlanningItemResponse;
     createdItemIds.push(created.id);
     expect(created.title).toBe(uniqueTitle);
     expect(created.listId).toBeNull();
+    expect(created.itemTypeId).toBe(seededDefaultItemType.id);
+    expect(created.statusId).toBe(seededDefaultStatus.id);
 
     const getResponse = await GET();
     expect(getResponse.status).toBe(200);

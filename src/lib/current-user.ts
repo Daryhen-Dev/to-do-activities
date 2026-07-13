@@ -15,5 +15,13 @@
 export const DEV_USER_ID = "dev-user-000000000000000000000";
 
 export async function getCurrentUserId(): Promise<string> {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "getCurrentUserId() is a dev-only stub returning a fixed user id. " +
+        "It must be replaced by real Auth.js session resolution before " +
+        "this code can run in production.",
+    );
+  }
+
   return DEV_USER_ID;
 }

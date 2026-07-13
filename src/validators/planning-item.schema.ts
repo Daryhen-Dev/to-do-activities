@@ -8,7 +8,11 @@ import { z } from "zod";
  * client payload.
  */
 export const createPlanningItemSchema = z.object({
-  title: z.string().trim().min(1, "title is required"),
+  title: z
+    .string()
+    .trim()
+    .min(1, "title is required")
+    .max(500, "title must be at most 500 characters"),
   description: z.string().trim().min(1).optional(),
   listId: z.string().min(1).optional(),
   itemTypeId: z.string().min(1).optional(),
