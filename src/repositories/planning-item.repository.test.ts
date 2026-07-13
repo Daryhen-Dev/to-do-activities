@@ -1,0 +1,130 @@
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { DEV_USER_ID } from "../lib/current-user";
+import { prisma } from "../lib/prisma";
+import {
+  createPlanningItem,
+  listPlanningItemsByUser,
+} from "./planning-item.repository";
+
+/**
+ * Integration tests against the real, seeded Postgres instance (see
+ * `docker-compose.yml` / `pnpm db:seed`). Exercises the sole Prisma
+ * boundary for the planning-item slice — every row this suite creates is
+ * removed in `afterAll` so reruns stay green.
+ */
+describe("planning-item repository (integration)", () => {
+  let itemTypeId: string;
+  let statusId: string;
+  const createdItemIds: string[] = [];
+  let otherUserId: string | null = null;
+
+  beforeAll(async () => {
+    const itemType = await prisma.itemType.findFirstOrThrow({
+      where: { isDefault: true },
+    });
+    const status = await prisma.status.findFirstOrThrow({
+      where: { isDefault: true },
+    });
+    itemTypeId = itemType.id;
+    statusId = status.id;
+  });
+
+  afterAll(async () => {
+    if (createdItemIds.length > 0) {
+      await prisma.planningItem.deleteMany({
+        where: { id: { in: createdItemIds } },
+      });
+    }
+    if (otherUserId) {
+      // Cascades and removes any planning items owned by this throwaway user.
+      await prisma.user.delete({ where: { id: otherUserId } });
+    }
+  });
+
+  it("persists a planning item with a nullable listId", async () => {
+    const item = await createPlanningItem({
+      userId: DEV_USER_ID,
+      title: "Integration test: persists item",
+      description: null,
+      listId: null,
+      itemTypeId,
+      priorityId: null,
+      statusId,
+    });
+    createdItemIds.push(item.id);
+
+    expect(item.id).toBeDefined();
+    expect(item.title).toBe("Integration test: persists item");
+    expect(item.listId).toBeNull();
+    expect(item.userId).toBe(DEV_USER_ID);
+  });
+
+  it("rejects an unknown itemTypeId with a NotFoundError, translating the FK violation", async () => {
+    await expect(
+      createPlanningItem({
+        userId: DEV_USER_ID,
+        title: "Should not be created",
+        description: null,
+        listId: null,
+        itemTypeId: "does-not-exist",
+        priorityId: null,
+        statusId,
+      }),
+    ).rejects.toThrow(/do not exist/);
+  });
+
+  it("lists non-deleted items and excludes soft-deleted rows", async () => {
+    const visible = await createPlanningItem({
+      userId: DEV_USER_ID,
+      title: "Integration test: visible item",
+      description: null,
+      listId: null,
+      itemTypeId,
+      priorityId: null,
+      statusId,
+    });
+    createdItemIds.push(visible.id);
+
+    const softDeleted = await createPlanningItem({
+      userId: DEV_USER_ID,
+      title: "Integration test: soft-deleted item",
+      description: null,
+      listId: null,
+      itemTypeId,
+      priorityId: null,
+      statusId,
+    });
+    createdItemIds.push(softDeleted.id);
+    await prisma.planningItem.update({
+      where: { id: softDeleted.id },
+      data: { deletedAt: new Date() },
+    });
+
+    const items = await listPlanningItemsByUser(DEV_USER_ID);
+    const ids = items.map((item) => item.id);
+
+    expect(ids).toContain(visible.id);
+    expect(ids).not.toContain(softDeleted.id);
+  });
+
+  it("scopes results to the requested user only", async () => {
+    const otherUser = await prisma.user.create({
+      data: { email: `other-user-${Date.now()}@test.local` },
+    });
+    otherUserId = otherUser.id;
+
+    const otherUsersItem = await prisma.planningItem.create({
+      data: {
+        userId: otherUser.id,
+        title: "Integration test: another user's item",
+        itemTypeId,
+        statusId,
+      },
+    });
+
+    const items = await listPlanningItemsByUser(DEV_USER_ID);
+    const ids = items.map((item) => item.id);
+
+    expect(ids).not.toContain(otherUsersItem.id);
+  });
+});
