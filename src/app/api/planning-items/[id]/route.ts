@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { z, ZodError } from "zod";
-import { NotFoundError, ValidationError } from "../../../../lib/errors";
+import {
+  NotFoundError,
+  UnauthorizedError,
+  ValidationError,
+} from "../../../../lib/errors";
 import {
   deletePlanningItemForCurrentUser,
   getPlanningItemForCurrentUser,
@@ -41,6 +45,10 @@ function mapErrorToResponse(error: unknown): NextResponse {
 
   if (error instanceof ValidationError) {
     return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+
+  if (error instanceof UnauthorizedError) {
+    return NextResponse.json({ error: error.message }, { status: 401 });
   }
 
   if (error instanceof NotFoundError) {

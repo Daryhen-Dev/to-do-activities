@@ -3,6 +3,7 @@ import { z, ZodError } from "zod";
 import {
   ConflictError,
   NotFoundError,
+  UnauthorizedError,
   ValidationError,
 } from "../../../../lib/errors";
 import {
@@ -45,6 +46,10 @@ function mapErrorToResponse(error: unknown): NextResponse {
 
   if (error instanceof ValidationError) {
     return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+
+  if (error instanceof UnauthorizedError) {
+    return NextResponse.json({ error: error.message }, { status: 401 });
   }
 
   if (error instanceof NotFoundError) {

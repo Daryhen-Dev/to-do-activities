@@ -1,5 +1,13 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { prisma } from "../../../lib/prisma";
+
+// Authenticate as the seeded dev user without wiring up a real session —
+// this isolates the DB integration path from the Auth.js transport (and
+// avoids loading next-auth in the Node/Vitest environment).
+vi.mock("../../../lib/current-user", () => ({
+  getCurrentUserId: vi.fn().mockResolvedValue("dev-user-000000000000000000000"),
+}));
+
 import { GET, POST } from "./route";
 
 /**

@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { NotFoundError, ValidationError } from "../../../lib/errors";
+import {
+  NotFoundError,
+  UnauthorizedError,
+  ValidationError,
+} from "../../../lib/errors";
 
 /**
  * HTTP-mapping tests: the service layer is mocked so these tests verify
@@ -74,6 +78,16 @@ describe("POST /api/planning-items", () => {
     );
 
     expect(response.status).toBe(404);
+  });
+
+  it("returns 401 when the acting user is not authenticated", async () => {
+    mockCreate.mockRejectedValue(
+      new UnauthorizedError("Authentication required."),
+    );
+
+    const response = await POST(postRequest({ title: "Buy milk" }));
+
+    expect(response.status).toBe(401);
   });
 
   it("returns 500 without leaking the underlying error shape", async () => {

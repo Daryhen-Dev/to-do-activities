@@ -1,7 +1,13 @@
 import type { Category, List } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { DEV_USER_ID } from "../lib/current-user";
+import { DEV_USER_ID } from "../lib/dev-user";
 import { NotFoundError } from "../lib/errors";
+
+// getCurrentUserId now reads the Auth.js session; stub it so these stay
+// true unit tests isolated from auth.
+vi.mock("../lib/current-user", () => ({
+  getCurrentUserId: vi.fn().mockResolvedValue("dev-user-000000000000000000000"),
+}));
 
 vi.mock("../repositories/list.repository", () => ({
   createList: vi.fn(),

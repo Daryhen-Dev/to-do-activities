@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from "vitest";
-import { DEV_USER_ID } from "../lib/current-user";
+import { DEV_USER_ID } from "../lib/dev-user";
 import { ConflictError, NotFoundError } from "../lib/errors";
 import { prisma } from "../lib/prisma";
 import {

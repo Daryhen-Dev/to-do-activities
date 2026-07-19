@@ -1,27 +1,25 @@
+import { auth } from "../auth";
+import { UnauthorizedError } from "./errors";
+
 /**
- * Current-user resolution.
+ * Current-user resolution — the single source of "who is the acting user"
+ * for the API. Every service resolves ownership through this function, so
+ * it is also the one place that enforces authentication.
  *
- * This is the ONLY source of "who is the acting user" for the API. Auth.js
- * is not wired up yet, so every request is treated as the single seeded
- * dev user (see `src/prisma/seed.ts`, which upserts a User row with this
- * exact id).
- *
- * When Auth.js lands, only the body of `getCurrentUserId()` changes (e.g.
- * reading `session.user.id` from the request context) — the signature
- * (async, resolves to a user id string) and every caller stay identical.
- * The function is already `async` for that reason, even though the current
- * stub implementation is synchronous under the hood.
+ * It reads the Auth.js (NextAuth v5) session server-side and returns the
+ * signed-in user's id, throwing `UnauthorizedError` (mapped to HTTP 401 by
+ * the route handlers) when there is no authenticated session. The signature
+ * — async, resolves to a user id string — is unchanged from the earlier dev
+ * stub, so every caller stayed identical when real auth landed.
  */
-export const DEV_USER_ID = "dev-user-000000000000000000000";
 
 export async function getCurrentUserId(): Promise<string> {
-  if (process.env.NODE_ENV === "production") {
-    throw new Error(
-      "getCurrentUserId() is a dev-only stub returning a fixed user id. " +
-        "It must be replaced by real Auth.js session resolution before " +
-        "this code can run in production.",
-    );
+  const session = await auth();
+  const userId = session?.user?.id;
+
+  if (!userId) {
+    throw new UnauthorizedError("Authentication required.");
   }
 
-  return DEV_USER_ID;
+  return userId;
 }
