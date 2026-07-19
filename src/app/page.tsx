@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { auth } from "@/auth";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { TaskList } from "@/components/tasks/task-list";
@@ -16,7 +18,15 @@ export default async function Home() {
             </p>
           ) : null}
         </div>
-        <SignOutButton />
+        <div className="flex items-center gap-2">
+          <Link
+            href="/categories"
+            className="text-sm text-muted-foreground hover:text-foreground"
+          >
+            Categories
+          </Link>
+          <SignOutButton />
+        </div>
       </header>
 
       <TaskList />
