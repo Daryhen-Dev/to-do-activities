@@ -16,6 +16,24 @@ export interface CreatePlanningItemData {
   itemTypeId: string;
   priorityId: string | null;
   statusId: string;
+  dueAt: Date | null;
+}
+
+/**
+ * Partial patch for an existing item. Only the keys present are written;
+ * nullable columns accept `null` to clear them (see the schema for the
+ * "unset vs omit" contract). Required columns (`itemTypeId`, `statusId`)
+ * may be reassigned but never nulled.
+ */
+export interface UpdatePlanningItemData {
+  title?: string;
+  description?: string | null;
+  listId?: string | null;
+  itemTypeId?: string;
+  priorityId?: string | null;
+  statusId?: string;
+  dueAt?: Date | null;
+  archived?: boolean;
 }
 
 /**
@@ -49,6 +67,58 @@ export async function listPlanningItemsByUser(
   return prisma.planningItem.findMany({
     where: { userId, deletedAt: null },
     orderBy: { createdAt: "desc" },
+  });
+}
+
+/**
+ * A single item owned by `userId`, or `null` if it does not exist, is
+ * soft-deleted, or belongs to someone else. Callers (service layer) throw
+ * `NotFoundError` on `null` so existence is never leaked via a different
+ * status — same pattern as `findOwnedCategory`.
+ */
+export async function findOwnedPlanningItem(
+  userId: string,
+  id: string,
+): Promise<PlanningItem | null> {
+  return prisma.planningItem.findFirst({
+    where: { id, userId, deletedAt: null },
+  });
+}
+
+/**
+ * Updates an item already confirmed owned by the caller (service-layer
+ * precheck). Unknown listId/itemTypeId/priorityId/statusId references fail
+ * the FK constraint with Prisma error P2003, translated here into the
+ * domain `NotFoundError` — same boundary contract as `createPlanningItem`.
+ */
+export async function updatePlanningItem(
+  id: string,
+  data: UpdatePlanningItemData,
+): Promise<PlanningItem> {
+  try {
+    return await prisma.planningItem.update({ where: { id }, data });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2003"
+    ) {
+      throw new NotFoundError(
+        "One or more referenced ids (listId, itemTypeId, priorityId, statusId) do not exist.",
+      );
+    }
+    throw error;
+  }
+}
+
+/**
+ * Archives an item by setting `deletedAt`. Idempotent at the row level; the
+ * service-layer ownership precheck guarantees the row is live and owned
+ * before this runs.
+ */
+export async function softDeletePlanningItem(id: string): Promise<void> {
+  await prisma.planningItem.update({
+    where: { id },
+    data: { deletedAt: new Date() },
   });
 }
 

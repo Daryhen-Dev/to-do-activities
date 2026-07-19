@@ -5,7 +5,10 @@ import {
   createPlanningItem,
   findDefaultItemTypeId,
   findDefaultStatusId,
+  findOwnedPlanningItem,
   listPlanningItemsByUser,
+  softDeletePlanningItem,
+  updatePlanningItem,
 } from "./planning-item.repository";
 
 /**
@@ -163,5 +166,92 @@ describe("planning-item repository (integration)", () => {
     const items = await listPlanningItemsByUser(freshUser.id);
 
     expect(items).toEqual([]);
+  });
+
+  it("finds an owned, non-deleted item and returns null for a soft-deleted one", async () => {
+    const item = await createPlanningItem({
+      userId: DEV_USER_ID,
+      title: "Integration test: findOwned",
+      description: null,
+      listId: null,
+      itemTypeId,
+      priorityId: null,
+      statusId,
+      dueAt: null,
+    });
+    createdItemIds.push(item.id);
+
+    const found = await findOwnedPlanningItem(DEV_USER_ID, item.id);
+    expect(found?.id).toBe(item.id);
+
+    await softDeletePlanningItem(item.id);
+    const afterDelete = await findOwnedPlanningItem(DEV_USER_ID, item.id);
+    expect(afterDelete).toBeNull();
+  });
+
+  it("does not find an item owned by another user", async () => {
+    const stranger = await prisma.user.create({
+      data: { email: `stranger-${Date.now()}@test.local` },
+    });
+    throwawayUserIds.push(stranger.id);
+
+    const item = await createPlanningItem({
+      userId: DEV_USER_ID,
+      title: "Integration test: not yours",
+      description: null,
+      listId: null,
+      itemTypeId,
+      priorityId: null,
+      statusId,
+      dueAt: null,
+    });
+    createdItemIds.push(item.id);
+
+    const found = await findOwnedPlanningItem(stranger.id, item.id);
+    expect(found).toBeNull();
+  });
+
+  it("updates provided fields and clears a nullable field with null", async () => {
+    const dueAt = new Date("2026-09-01T12:00:00.000Z");
+    const item = await createPlanningItem({
+      userId: DEV_USER_ID,
+      title: "Integration test: update me",
+      description: "before",
+      listId: null,
+      itemTypeId,
+      priorityId: null,
+      statusId,
+      dueAt,
+    });
+    createdItemIds.push(item.id);
+
+    const updated = await updatePlanningItem(item.id, {
+      title: "after",
+      description: null,
+      archived: true,
+    });
+
+    expect(updated.title).toBe("after");
+    expect(updated.description).toBeNull();
+    expect(updated.archived).toBe(true);
+    expect(updated.dueAt?.toISOString()).toBe(dueAt.toISOString());
+  });
+
+  it("rejects an update with an unknown statusId, translating the FK violation", async () => {
+    const item = await createPlanningItem({
+      userId: DEV_USER_ID,
+      title: "Integration test: bad update",
+      description: null,
+      listId: null,
+      itemTypeId,
+      priorityId: null,
+      statusId,
+      dueAt: null,
+    });
+    createdItemIds.push(item.id);
+
+    await expect(
+      updatePlanningItem(item.id, { statusId: "does-not-exist" }),
+    ).rejects.toThrow(/do not exist/);
   });
 });
