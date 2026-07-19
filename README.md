@@ -51,10 +51,20 @@ migrations.
 
 ## Authentication
 
-Auth.js is not wired up yet. `src/lib/current-user.ts` returns a fixed
-`DEV_USER_ID` in development and throws in production. When real auth lands,
-only the body of `getCurrentUserId()` changes — its signature and every caller
-stay identical.
+Auth.js (NextAuth v5) with a Credentials provider and stateless JWT sessions.
+`getCurrentUserId()` (in `src/lib/current-user.ts`) resolves the acting user
+from the session and throws `UnauthorizedError` (HTTP 401) when there is none,
+so every service enforces auth through that single seam. Route protection for
+pages lives in `src/proxy.ts` (the Next 16 successor to `middleware.ts`), which
+shares the edge-safe `src/auth.config.ts` with the full server config in
+`src/auth.ts`.
+
+Local sign-in uses the seeded dev user:
+
+- **Email**: `dev@local.test`
+- **Password**: `devpassword123`
+
+`AUTH_SECRET` must be set in `.env` (see `.env.example` for how to generate one).
 
 ## Getting Started
 
@@ -79,7 +89,12 @@ cp .env.example .env
 ```
 
 The default `DATABASE_URL` matches the Docker Compose credentials
-(`todo:todo@localhost:5432/todo_activities`).
+(`todo:todo@localhost:5432/todo_activities`). Also set `AUTH_SECRET` — generate
+one with:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
 
 ### 4. Run migrations and seed
 
