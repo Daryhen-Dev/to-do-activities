@@ -1,8 +1,7 @@
 "use client";
 
-import type { Category } from "@prisma/client";
+import type { List } from "@prisma/client";
 import { Pencil, Trash2 } from "lucide-react";
-import Link from "next/link";
 import { useState } from "react";
 
 import {
@@ -17,51 +16,35 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { CategoryFormDialog } from "@/components/categories/category-form-dialog";
+import { ListFormDialog } from "@/components/lists/list-form-dialog";
 
-interface CategoryItemProps {
-  category: Category;
+interface ListItemProps {
+  list: List;
   onUpdate: (id: string, name: string) => Promise<boolean>;
-  onDelete: (category: Category) => Promise<void>;
+  onDelete: (list: List) => Promise<void>;
 }
 
-export function CategoryItem({
-  category,
-  onUpdate,
-  onDelete,
-}: CategoryItemProps) {
+export function ListItem({ list, onUpdate, onDelete }: ListItemProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
   async function handleConfirmDelete() {
     setIsDeleting(true);
-    await onDelete(category);
+    await onDelete(list);
     setIsDeleting(false);
     setConfirmOpen(false);
   }
 
   return (
     <li className="flex items-center gap-3 rounded-lg px-3 py-2 ring-1 ring-foreground/10">
-      {category.color ? (
-        <span
-          aria-hidden
-          className="size-3 shrink-0 rounded-full"
-          style={{ backgroundColor: category.color }}
-        />
-      ) : null}
-      <Link
-        href={`/categories/${category.id}`}
-        className="flex-1 truncate hover:underline"
-      >
-        {category.name}
-      </Link>
+      <span className="flex-1 truncate">{list.name}</span>
 
-      <CategoryFormDialog
+      <ListFormDialog
         mode="edit"
-        defaultName={category.name}
-        onSubmit={(name) => onUpdate(category.id, name)}
+        defaultName={list.name}
+        onSubmit={(name) => onUpdate(list.id, name)}
         trigger={
-          <Button variant="ghost" size="icon-sm" aria-label="Rename category">
+          <Button variant="ghost" size="icon-sm" aria-label="Rename list">
             <Pencil />
           </Button>
         }
@@ -70,21 +53,17 @@ export function CategoryItem({
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogTrigger
           render={
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Delete category"
-            >
+            <Button variant="ghost" size="icon-sm" aria-label="Delete list">
               <Trash2 />
             </Button>
           }
         />
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete this category?</AlertDialogTitle>
+            <AlertDialogTitle>Delete this list?</AlertDialogTitle>
             <AlertDialogDescription>
-              This archives “{category.name}” and all of its lists. You can’t
-              undo this from the app.
+              This archives “{list.name}”. Your tasks are kept — only the list
+              is removed.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
