@@ -1,36 +1,113 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# To-Do Activities
+
+A task and activity planning application. Users organize work into categories
+and lists, then track individual planning items classified by type, priority,
+and status.
+
+## Tech Stack
+
+- **Next.js 16** (App Router) + **React 19** + **TypeScript**
+- **Prisma 7** ORM over **PostgreSQL 17**
+- **Zod 4** for input validation
+- **Vitest** for unit and integration tests
+- **pnpm** as the package manager
+- **Docker Compose** for the local database
+
+## Architecture
+
+The codebase follows a layered (Clean/Hexagonal) architecture. Each layer has
+a single responsibility and its own colocated tests:
+
+```
+src/
+├── validators/   # Zod schemas — validate incoming request data
+├── repositories/ # Data access — the only place that talks to Prisma
+├── services/     # Business logic — orchestrates repositories and rules
+├── lib/          # Shared helpers (prisma client, errors, current user)
+├── prisma/       # Schema, migrations, and seed
+└── app/api/      # Next.js route handlers (HTTP layer)
+```
+
+Route handlers are intentionally thin: they validate the request with Zod,
+delegate to exactly one service function, and map the result or error to an
+HTTP status code. No business logic or Prisma imports live in the route layer.
+
+## Data Model
+
+- **User** — owner of all data (cascade delete).
+- **Category → List** — a hierarchy for grouping work. Both support soft delete
+  via `deletedAt`.
+- **PlanningItem** — the core entity. Belongs to a user, optionally to a list,
+  and is classified by three catalogs:
+  - **ItemType** — with capability flags (`requiresCompletion`, `allowsProgress`,
+    `allowsChecklist`, `allowsRepetition`).
+  - **Priority**
+  - **Status**
+
+Some invariants that Prisma's schema DSL cannot express — partial unique indexes
+scoped to non-deleted rows (`WHERE deleted_at IS NULL`) and the "at most one
+default" rule for `ItemType`/`Status` — are enforced through hand-written SQL
+migrations.
+
+## Authentication
+
+Auth.js is not wired up yet. `src/lib/current-user.ts` returns a fixed
+`DEV_USER_ID` in development and throws in production. When real auth lands,
+only the body of `getCurrentUserId()` changes — its signature and every caller
+stay identical.
 
 ## Getting Started
 
-First, run the development server:
+### 1. Install dependencies
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### 2. Start the database
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+pnpm db:up
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 3. Configure environment
 
-## Learn More
+Copy the example env file and adjust if needed:
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+cp .env.example .env
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+The default `DATABASE_URL` matches the Docker Compose credentials
+(`todo:todo@localhost:5432/todo_activities`).
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+### 4. Run migrations and seed
 
-## Deploy on Vercel
+```bash
+pnpm db:migrate
+pnpm db:seed
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### 5. Start the dev server
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+```bash
+pnpm dev
+```
+
+Open [http://localhost:3000](http://localhost:3000).
+
+## Scripts
+
+| Script            | Description                              |
+| ----------------- | ---------------------------------------- |
+| `pnpm dev`        | Start the Next.js dev server             |
+| `pnpm build`      | Production build                         |
+| `pnpm start`      | Start the production server              |
+| `pnpm lint`       | Run ESLint                               |
+| `pnpm test`       | Run the Vitest suite once                |
+| `pnpm db:up`      | Start the PostgreSQL container           |
+| `pnpm db:down`    | Stop the PostgreSQL container            |
+| `pnpm db:migrate` | Apply Prisma migrations (dev)            |
+| `pnpm db:seed`    | Seed the database                        |
+| `pnpm db:studio`  | Open Prisma Studio                       |
+| `pnpm db:generate`| Regenerate the Prisma client             |
