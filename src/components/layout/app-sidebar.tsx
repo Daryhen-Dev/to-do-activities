@@ -1,7 +1,14 @@
 "use client";
 
 import type { Category, List } from "@prisma/client";
-import { ChevronRightIcon, ListTodo, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  CalendarDays,
+  ChevronRightIcon,
+  ListTodo,
+  Pencil,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -99,6 +106,10 @@ export function AppSidebar({ user, ...props }: AppSidebarProps) {
   const activeListId = pathname?.startsWith("/lists/")
     ? pathname.slice("/lists/".length)
     : null;
+
+  // The category whose calendar is currently open (/categories/[id]/calendar).
+  const calendarMatch = pathname?.match(/^\/categories\/([^/]+)\/calendar/);
+  const activeCalendarCategoryId = calendarMatch ? calendarMatch[1] : null;
 
   useEffect(() => {
     void ensureLoaded();
@@ -269,6 +280,7 @@ export function AppSidebar({ user, ...props }: AppSidebarProps) {
                   category={category}
                   lists={listsByCategory.get(category.id) ?? []}
                   activeListId={activeListId}
+                  calendarActive={activeCalendarCategoryId === category.id}
                   onCreateList={handleCreateList}
                   onRenameCategory={handleRenameCategory}
                   onDeleteCategory={handleDeleteCategory}
@@ -306,6 +318,8 @@ interface CategoryNodeProps {
   category: Category;
   lists: List[];
   activeListId: string | null;
+  /** True when this category's calendar route is the active one. */
+  calendarActive: boolean;
   onCreateList: (categoryId: string, name: string) => Promise<boolean>;
   onRenameCategory: (id: string, name: string) => Promise<boolean>;
   onDeleteCategory: (category: Category) => Promise<void>;
@@ -318,6 +332,7 @@ function CategoryNode({
   category,
   lists,
   activeListId,
+  calendarActive,
   onCreateList,
   onRenameCategory,
   onDeleteCategory,
@@ -332,8 +347,8 @@ function CategoryNode({
   // sidebar's data loads asynchronously, so an uncontrolled default would
   // change after mount and Base UI warns about that. The initializer captures
   // the value at mount; the user drives it from there via the trigger.
-  const [open, setOpen] = useState(() =>
-    lists.some((list) => list.id === activeListId),
+  const [open, setOpen] = useState(
+    () => calendarActive || lists.some((list) => list.id === activeListId),
   );
 
   async function handleConfirmDelete() {
@@ -417,6 +432,17 @@ function CategoryNode({
 
       <CollapsibleContent>
         <SidebarMenuSub>
+          {/* Per-category calendar link (Requirement 1.2). */}
+          <SidebarMenuSubItem>
+            <SidebarMenuSubButton
+              isActive={calendarActive}
+              render={<Link href={`/categories/${category.id}/calendar`} />}
+            >
+              <CalendarDays />
+              <span>Calendar</span>
+            </SidebarMenuSubButton>
+          </SidebarMenuSubItem>
+
           {lists.length === 0 ? (
             <li className="px-2 py-1 text-xs text-muted-foreground">
               No lists yet.

@@ -58,23 +58,23 @@ flowchart TD
   - Vitest tests in `src/stores/calendar-store.test.ts`: `setView`; `goToPrevMonth`/`goToNextMonth` shift the anchor by exactly one month including year rollover (Dec→Jan, Jan→Dec); `goToToday` resets to the current month. Reset the singleton store in `beforeEach`.
   - _Requirements: 4.1, 4.3_
 
-- [ ] 5. Build the presentational calendar pieces
+- [x] 5. Build the presentational calendar pieces
   - Add `src/components/calendar/calendar-toolbar.tsx` (month/year title, prev/today/next, month|agenda toggle — calls store actions), `month-grid.tsx` (weekday header + `Date[][]`; current-day highlight, out-of-month dimming, up to `MAX_PER_DAY` event chips via `eventsOnDay` with "+N more" overflow; chip shows local start time or "All day" + title), and `agenda-list.tsx` (day-grouped list from `groupEventsByDay`; time range or "All day" + title; neutral empty message). Local timezone formatting; read-only (no edit/drag).
   - _Requirements: 2.2, 2.3, 2.5, 3.2, 3.3, 4.1, 4.2, 6.1, 6.2, 6.3, 7.2_
 
 ### Phase 3 — Container, route, navigation
 
-- [ ] 6. Build the CategoryCalendar container
+- [x] 6. Build the CategoryCalendar container
   - Add `src/components/calendar/category-calendar.tsx` (client): read `view`/`anchorDate` + actions from `useCalendarStore`; compute `rangeFor(view, anchorDate)`; fetch `/api/categories/[id]/calendar?from=&to=` on range change (`sonner` on failure, loading indicator); map rows via `toCalendarEvents`; render `<CalendarToolbar>` and, by view, `<MonthGrid>` or `<AgendaList>`.
   - _Requirements: 1.1, 4.4, 5.1, 5.2, 5.3, 5.4, 7.1_
 
-- [ ] 7. Add the route and navigation entry points
+- [x] 7. Add the route and navigation entry points
   - Add `src/app/(app)/categories/[id]/calendar/page.tsx` (RSC): resolve via `getCategoryForCurrentUser(id)`, `notFound()` on `NotFoundError`, render `<CategoryCalendar categoryId categoryName />`. Add a per-category "Calendar" link in the sidebar category group (`/categories/[id]/calendar`) and a "Calendar" link on each dashboard `CategoryCard`.
   - _Requirements: 1.1, 1.2, 1.3, 1.4_
 
 ### Phase 4 — Verification
 
-- [ ] 8. Full verification pass
+- [x] 8. Full verification pass
   - `pnpm build`, `pnpm test`, `pnpm lint`, `pnpm exec tsc --noEmit` all green (clear `.next` if a stale route type error appears). Manual smoke test: open a category calendar; events land on the correct local days/times; prev/next/today and month/agenda toggle work; a non-owned category 404s; empty and loading states render.
   - _Requirements: 1.1, 1.3, 2.1, 2.2, 3.1, 4.1, 5.1, 6.1, 7.1_
 

@@ -57,8 +57,14 @@ export function CategoryCard({ category, stats, statuses }: CategoryCardProps) {
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="flex-row items-center justify-between gap-2">
         <CardTitle>{category.name}</CardTitle>
+        <Link
+          href={`/categories/${category.id}/calendar`}
+          className="text-sm text-primary underline-offset-4 hover:underline"
+        >
+          Calendar
+        </Link>
       </CardHeader>
       <CardContent className="grid gap-4">
         {hasTasks ? (
