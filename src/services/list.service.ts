@@ -7,7 +7,7 @@ import {
   findOwnedList,
   listActiveListsByCategory,
   listActiveListsByUser,
-  softDeleteList,
+  softDeleteListWithTasks,
   updateList,
 } from "../repositories/list.repository";
 import type {
@@ -99,9 +99,13 @@ export async function updateListForCurrentUser(
   });
 }
 
-/** Soft-deletes an owned list. Ownership is prechecked here. */
+/**
+ * Soft-deletes an owned list and cascades the soft-delete to all of the
+ * list's active tasks in a single atomic transaction. Ownership is
+ * prechecked here; the cascade itself lives in `softDeleteListWithTasks`.
+ */
 export async function deleteListForCurrentUser(id: string): Promise<void> {
   const userId = await getCurrentUserId();
   await getOwnedListOrThrow(userId, id);
-  await softDeleteList(id);
+  await softDeleteListWithTasks(id);
 }

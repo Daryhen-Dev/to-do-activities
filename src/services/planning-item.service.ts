@@ -10,6 +10,7 @@ import {
   softDeletePlanningItem,
   updatePlanningItem,
 } from "../repositories/planning-item.repository";
+import { findOwnedList } from "../repositories/list.repository";
 import type {
   CreatePlanningItemInput,
   UpdatePlanningItemInput,
@@ -42,11 +43,20 @@ export async function createPlanningItemForCurrentUser(
     );
   }
 
+  // Enforce the mandatory hierarchy: the task must land in a list the caller
+  // owns. `findOwnedList` joins through the parent category, so a list that is
+  // absent or owned by someone else returns `null` and yields a precise 404 —
+  // consistent with the list vertical's ownership pattern.
+  const ownedList = await findOwnedList(userId, input.listId);
+  if (!ownedList) {
+    throw new NotFoundError("list not found");
+  }
+
   return createPlanningItem({
     userId,
     title: input.title,
     description: input.description ?? null,
-    listId: input.listId ?? null,
+    listId: input.listId,
     itemTypeId,
     priorityId: input.priorityId ?? null,
     statusId,

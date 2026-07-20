@@ -16,10 +16,15 @@ import {
  * `docker-compose.yml` / `pnpm db:seed`). Exercises the sole Prisma
  * boundary for the planning-item slice — every row this suite creates is
  * removed in `afterAll` so reruns stay green.
+ *
+ * Every task now belongs to a list (mandatory hierarchy), so the suite
+ * provisions a throwaway list under a seeded category in `beforeAll` and
+ * references it on every insert.
  */
 describe("planning-item repository (integration)", () => {
   let itemTypeId: string;
   let statusId: string;
+  let listId: string;
   const createdItemIds: string[] = [];
   let otherUserId: string | null = null;
   const throwawayUserIds: string[] = [];
@@ -33,6 +38,19 @@ describe("planning-item repository (integration)", () => {
     });
     itemTypeId = itemType.id;
     statusId = status.id;
+
+    // A list owned by the seeded dev user (via a seeded category) so inserts
+    // satisfy the now-required listId FK.
+    const category = await prisma.category.findFirstOrThrow({
+      where: { userId: DEV_USER_ID, deletedAt: null },
+    });
+    const list = await prisma.list.create({
+      data: {
+        categoryId: category.id,
+        name: `repo-test-list-${Date.now()}`,
+      },
+    });
+    listId = list.id;
   });
 
   afterAll(async () => {
@@ -48,23 +66,28 @@ describe("planning-item repository (integration)", () => {
     if (throwawayUserIds.length > 0) {
       await prisma.user.deleteMany({ where: { id: { in: throwawayUserIds } } });
     }
+    if (listId) {
+      // Cascades and removes any planning items still referencing this list.
+      await prisma.list.delete({ where: { id: listId } });
+    }
   });
 
-  it("persists a planning item with a nullable listId", async () => {
+  it("persists a planning item associated with its list", async () => {
     const item = await createPlanningItem({
       userId: DEV_USER_ID,
       title: "Integration test: persists item",
       description: null,
-      listId: null,
+      listId,
       itemTypeId,
       priorityId: null,
       statusId,
+      dueAt: null,
     });
     createdItemIds.push(item.id);
 
     expect(item.id).toBeDefined();
     expect(item.title).toBe("Integration test: persists item");
-    expect(item.listId).toBeNull();
+    expect(item.listId).toBe(listId);
     expect(item.userId).toBe(DEV_USER_ID);
   });
 
@@ -74,10 +97,26 @@ describe("planning-item repository (integration)", () => {
         userId: DEV_USER_ID,
         title: "Should not be created",
         description: null,
-        listId: null,
+        listId,
         itemTypeId: "does-not-exist",
         priorityId: null,
         statusId,
+        dueAt: null,
+      }),
+    ).rejects.toThrow(/do not exist/);
+  });
+
+  it("rejects an unknown listId with a NotFoundError, translating the FK violation", async () => {
+    await expect(
+      createPlanningItem({
+        userId: DEV_USER_ID,
+        title: "Should not be created",
+        description: null,
+        listId: "does-not-exist",
+        itemTypeId,
+        priorityId: null,
+        statusId,
+        dueAt: null,
       }),
     ).rejects.toThrow(/do not exist/);
   });
@@ -87,10 +126,11 @@ describe("planning-item repository (integration)", () => {
       userId: DEV_USER_ID,
       title: "Integration test: visible item",
       description: null,
-      listId: null,
+      listId,
       itemTypeId,
       priorityId: null,
       statusId,
+      dueAt: null,
     });
     createdItemIds.push(visible.id);
 
@@ -98,10 +138,11 @@ describe("planning-item repository (integration)", () => {
       userId: DEV_USER_ID,
       title: "Integration test: soft-deleted item",
       description: null,
-      listId: null,
+      listId,
       itemTypeId,
       priorityId: null,
       statusId,
+      dueAt: null,
     });
     createdItemIds.push(softDeleted.id);
     await prisma.planningItem.update({
@@ -126,6 +167,7 @@ describe("planning-item repository (integration)", () => {
       data: {
         userId: otherUser.id,
         title: "Integration test: another user's item",
+        listId,
         itemTypeId,
         statusId,
       },
@@ -173,7 +215,7 @@ describe("planning-item repository (integration)", () => {
       userId: DEV_USER_ID,
       title: "Integration test: findOwned",
       description: null,
-      listId: null,
+      listId,
       itemTypeId,
       priorityId: null,
       statusId,
@@ -199,7 +241,7 @@ describe("planning-item repository (integration)", () => {
       userId: DEV_USER_ID,
       title: "Integration test: not yours",
       description: null,
-      listId: null,
+      listId,
       itemTypeId,
       priorityId: null,
       statusId,
@@ -217,7 +259,7 @@ describe("planning-item repository (integration)", () => {
       userId: DEV_USER_ID,
       title: "Integration test: update me",
       description: "before",
-      listId: null,
+      listId,
       itemTypeId,
       priorityId: null,
       statusId,
@@ -242,7 +284,7 @@ describe("planning-item repository (integration)", () => {
       userId: DEV_USER_ID,
       title: "Integration test: bad update",
       description: null,
-      listId: null,
+      listId,
       itemTypeId,
       priorityId: null,
       statusId,

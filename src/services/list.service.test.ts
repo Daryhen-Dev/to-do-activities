@@ -14,7 +14,7 @@ vi.mock("../repositories/list.repository", () => ({
   findOwnedList: vi.fn(),
   listActiveListsByCategory: vi.fn(),
   listActiveListsByUser: vi.fn(),
-  softDeleteList: vi.fn(),
+  softDeleteListWithTasks: vi.fn(),
   updateList: vi.fn(),
 }));
 
@@ -28,7 +28,7 @@ import {
   findOwnedList,
   listActiveListsByCategory,
   listActiveListsByUser,
-  softDeleteList,
+  softDeleteListWithTasks,
   updateList,
 } from "../repositories/list.repository";
 import {
@@ -45,7 +45,7 @@ const mockCreate = vi.mocked(createList);
 const mockFindOwnedList = vi.mocked(findOwnedList);
 const mockListByCategory = vi.mocked(listActiveListsByCategory);
 const mockListByUser = vi.mocked(listActiveListsByUser);
-const mockSoftDelete = vi.mocked(softDeleteList);
+const mockSoftDeleteWithTasks = vi.mocked(softDeleteListWithTasks);
 const mockUpdate = vi.mocked(updateList);
 
 const ownedCategory = { id: "cat-1", userId: DEV_USER_ID } as Category;
@@ -182,14 +182,14 @@ describe("deleteListForCurrentUser", () => {
     vi.clearAllMocks();
   });
 
-  it("prechecks ownership then soft-deletes", async () => {
+  it("prechecks ownership then cascades the soft-delete to the list's tasks", async () => {
     mockFindOwnedList.mockResolvedValue({ id: "list-1" } as List);
-    mockSoftDelete.mockResolvedValue();
+    mockSoftDeleteWithTasks.mockResolvedValue();
 
     await deleteListForCurrentUser("list-1");
 
     expect(mockFindOwnedList).toHaveBeenCalledWith(DEV_USER_ID, "list-1");
-    expect(mockSoftDelete).toHaveBeenCalledWith("list-1");
+    expect(mockSoftDeleteWithTasks).toHaveBeenCalledWith("list-1");
   });
 
   it("throws NotFoundError and never deletes when the list is not owned", async () => {
@@ -198,6 +198,6 @@ describe("deleteListForCurrentUser", () => {
     await expect(deleteListForCurrentUser("missing")).rejects.toThrow(
       NotFoundError,
     );
-    expect(mockSoftDelete).not.toHaveBeenCalled();
+    expect(mockSoftDeleteWithTasks).not.toHaveBeenCalled();
   });
 });
