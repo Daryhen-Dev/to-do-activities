@@ -124,6 +124,46 @@ describe("PATCH /api/planning-items/[id]", () => {
       error: "Internal server error",
     });
   });
+
+  // Requirement 2.2: an inconsistent schedule is a domain ValidationError the
+  // service raises against the effective schedule -> 400.
+  it("returns 400 when the service rejects an inconsistent schedule", async () => {
+    mockUpdate.mockRejectedValue(
+      new ValidationError("endAt must be on or after startAt"),
+    );
+
+    const response = await PATCH(
+      patchRequest({
+        startAt: "2026-08-01T11:00:00.000Z",
+        endAt: "2026-08-01T10:00:00.000Z",
+      }),
+      context("item-1"),
+    );
+
+    expect(response.status).toBe(400);
+  });
+
+  // Requirement 2.1/2.2: a valid schedule patch is forwarded and returns 200.
+  it("returns 200 with the updated item on a valid schedule", async () => {
+    const updated = { id: "item-1", startAt: "2026-08-01T10:00:00.000Z" };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockUpdate.mockResolvedValue(updated as any);
+
+    const response = await PATCH(
+      patchRequest({
+        startAt: "2026-08-01T10:00:00.000Z",
+        endAt: "2026-08-01T11:00:00.000Z",
+      }),
+      context("item-1"),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(updated);
+    expect(mockUpdate).toHaveBeenCalledWith("item-1", {
+      startAt: new Date("2026-08-01T10:00:00.000Z"),
+      endAt: new Date("2026-08-01T11:00:00.000Z"),
+    });
+  });
 });
 
 describe("DELETE /api/planning-items/[id]", () => {

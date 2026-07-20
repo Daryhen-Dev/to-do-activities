@@ -7,6 +7,7 @@ import {
   findDefaultStatusId,
   findOwnedPlanningItem,
   listPlanningItemsByUser,
+  listScheduledItemsByCategory,
   softDeletePlanningItem,
   updatePlanningItem,
 } from "./planning-item.repository";
@@ -59,16 +60,18 @@ describe("planning-item repository (integration)", () => {
         where: { id: { in: createdItemIds } },
       });
     }
-    if (otherUserId) {
-      // Cascades and removes any planning items owned by this throwaway user.
-      await prisma.user.delete({ where: { id: otherUserId } });
-    }
-    if (throwawayUserIds.length > 0) {
-      await prisma.user.deleteMany({ where: { id: { in: throwawayUserIds } } });
+    // Idempotent cleanup (`deleteMany`, not `delete`) so a row already removed
+    // — e.g. by a cascade from parallel integration files sharing this DB —
+    // does not crash the suite with "No record found for a delete".
+    const userIds = [otherUserId, ...throwawayUserIds].filter(
+      (id): id is string => id !== null,
+    );
+    if (userIds.length > 0) {
+      // Cascades and removes any planning items owned by these throwaway users.
+      await prisma.user.deleteMany({ where: { id: { in: userIds } } });
     }
     if (listId) {
-      // Cascades and removes any planning items still referencing this list.
-      await prisma.list.delete({ where: { id: listId } });
+      await prisma.list.deleteMany({ where: { id: listId } });
     }
   });
 
@@ -295,5 +298,167 @@ describe("planning-item repository (integration)", () => {
     await expect(
       updatePlanningItem(item.id, { statusId: "does-not-exist" }),
     ).rejects.toThrow(/do not exist/);
+  });
+});
+
+/**
+ * Integration tests for the calendar range query. Provisions two lists under
+ * two owned categories in `beforeAll` (one is the "other" category used to
+ * prove category scoping) and seeds items whose schedules straddle a fixed
+ * `[from, to)` window. Every row created here is removed in `afterAll`.
+ */
+describe("listScheduledItemsByCategory (integration)", () => {
+  let itemTypeId: string;
+  let statusId: string;
+  let listId: string;
+  let otherListId: string;
+  const createdItemIds: string[] = [];
+
+  // Two STABLE seeded categories (fixed ids from `seed.ts`) — the category
+  // under test and a second one used to prove category scoping. We deliberately
+  // do NOT create/delete a category here: a freshly-created DEV-owned category
+  // can be picked by a parallel integration file's `findFirst` and then
+  // cascade-deleted when we clean up, corrupting that file's data. Referencing
+  // stable seeded categories and only managing our own lists/items keeps the
+  // suite deterministic under parallel file execution.
+  const categoryId = "dev-cat-trabajo";
+  const otherCategoryId = "dev-cat-personal";
+
+  // Fixed window: [from, to). Chosen far in the future to avoid colliding
+  // with any seeded scheduling data.
+  const from = new Date("2026-06-10T00:00:00.000Z");
+  const to = new Date("2026-06-17T00:00:00.000Z");
+
+  beforeAll(async () => {
+    const itemType = await prisma.itemType.findFirstOrThrow({
+      where: { isDefault: true },
+    });
+    const status = await prisma.status.findFirstOrThrow({
+      where: { isDefault: true },
+    });
+    itemTypeId = itemType.id;
+    statusId = status.id;
+
+    const list = await prisma.list.create({
+      data: { categoryId, name: `cal-test-list-${Date.now()}` },
+    });
+    listId = list.id;
+
+    // A list under the second seeded category, used to prove the query is
+    // scoped to a single category (its scheduled item must be excluded).
+    const otherList = await prisma.list.create({
+      data: { categoryId: otherCategoryId, name: `cal-test-other-list-${Date.now()}` },
+    });
+    otherListId = otherList.id;
+  });
+
+  afterAll(async () => {
+    if (createdItemIds.length > 0) {
+      await prisma.planningItem.deleteMany({
+        where: { id: { in: createdItemIds } },
+      });
+    }
+    // Idempotent: only our own throwaway lists are removed; the seeded
+    // categories are left intact.
+    const listIds = [listId, otherListId].filter(
+      (id): id is string => Boolean(id),
+    );
+    if (listIds.length > 0) {
+      await prisma.list.deleteMany({ where: { id: { in: listIds } } });
+    }
+  });
+
+  async function seedItem(data: {
+    title: string;
+    listId: string;
+    startAt: Date | null;
+    endAt?: Date | null;
+    dueAt?: Date | null;
+    deletedAt?: Date | null;
+  }) {
+    const item = await prisma.planningItem.create({
+      data: {
+        userId: DEV_USER_ID,
+        title: data.title,
+        listId: data.listId,
+        itemTypeId,
+        statusId,
+        startAt: data.startAt,
+        endAt: data.endAt ?? null,
+        dueAt: data.dueAt ?? null,
+        deletedAt: data.deletedAt ?? null,
+      },
+    });
+    createdItemIds.push(item.id);
+    return item;
+  }
+
+  it("returns only scheduled, in-range, same-category items and orders them by startAt", async () => {
+    // INCLUDED: a point item whose start falls inside the window.
+    const inRange = await seedItem({
+      title: "cal: in-range point item",
+      listId,
+      startAt: new Date("2026-06-12T10:00:00.000Z"),
+    });
+
+    // INCLUDED: a ranged event that starts BEFORE the window but ends inside
+    // it — overlap crossing the `from` boundary.
+    const crossingBoundary = await seedItem({
+      title: "cal: multi-day crossing the from boundary",
+      listId,
+      startAt: new Date("2026-06-08T09:00:00.000Z"),
+      endAt: new Date("2026-06-11T09:00:00.000Z"),
+    });
+
+    // EXCLUDED: unscheduled item (no startAt, deadline only).
+    const unscheduled = await seedItem({
+      title: "cal: unscheduled (dueAt only)",
+      listId,
+      startAt: null,
+      dueAt: new Date("2026-06-12T10:00:00.000Z"),
+    });
+
+    // EXCLUDED: soft-deleted, otherwise in-range.
+    const softDeleted = await seedItem({
+      title: "cal: soft-deleted in-range",
+      listId,
+      startAt: new Date("2026-06-13T10:00:00.000Z"),
+      deletedAt: new Date(),
+    });
+
+    // EXCLUDED: scheduled and in-range but under a different category.
+    const otherCategoryItem = await seedItem({
+      title: "cal: other category in-range",
+      listId: otherListId,
+      startAt: new Date("2026-06-12T10:00:00.000Z"),
+    });
+
+    // EXCLUDED: starts on/after the `to` boundary (outside the window).
+    const afterWindow = await seedItem({
+      title: "cal: starts after the to boundary",
+      listId,
+      startAt: new Date("2026-06-20T10:00:00.000Z"),
+    });
+
+    const items = await listScheduledItemsByCategory(
+      DEV_USER_ID,
+      categoryId,
+      from,
+      to,
+    );
+    const ids = items.map((item) => item.id);
+
+    expect(ids).toContain(inRange.id);
+    expect(ids).toContain(crossingBoundary.id);
+    expect(ids).not.toContain(unscheduled.id);
+    expect(ids).not.toContain(softDeleted.id);
+    expect(ids).not.toContain(otherCategoryItem.id);
+    expect(ids).not.toContain(afterWindow.id);
+
+    // Ordered by startAt asc: the boundary-crossing event (starts 06-08)
+    // precedes the in-range point item (starts 06-12).
+    expect(ids.indexOf(crossingBoundary.id)).toBeLessThan(
+      ids.indexOf(inRange.id),
+    );
   });
 });

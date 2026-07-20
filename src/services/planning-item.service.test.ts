@@ -1,7 +1,7 @@
-import type { List, PlanningItem } from "@prisma/client";
+import type { Category, List, PlanningItem } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEV_USER_ID } from "../lib/dev-user";
-import { NotFoundError } from "../lib/errors";
+import { NotFoundError, ValidationError } from "../lib/errors";
 
 // getCurrentUserId now reads the Auth.js session; stub it so these stay
 // true unit tests isolated from auth.
@@ -15,6 +15,7 @@ vi.mock("../repositories/planning-item.repository", () => ({
   findDefaultStatusId: vi.fn(),
   findOwnedPlanningItem: vi.fn(),
   listPlanningItemsByUser: vi.fn(),
+  listScheduledItemsByCategory: vi.fn(),
   softDeletePlanningItem: vi.fn(),
   updatePlanningItem: vi.fn(),
 }));
@@ -25,6 +26,13 @@ vi.mock("../repositories/list.repository", () => ({
   findOwnedList: vi.fn(),
 }));
 
+// The calendar range query prechecks category ownership through the category
+// repository before delegating to the planning-item repo — mock it here.
+vi.mock("../repositories/category.repository", () => ({
+  findOwnedCategory: vi.fn(),
+}));
+
+import { findOwnedCategory } from "../repositories/category.repository";
 import { findOwnedList } from "../repositories/list.repository";
 import {
   createPlanningItem,
@@ -32,6 +40,7 @@ import {
   findDefaultStatusId,
   findOwnedPlanningItem,
   listPlanningItemsByUser,
+  listScheduledItemsByCategory,
   softDeletePlanningItem,
   updatePlanningItem,
 } from "../repositories/planning-item.repository";
@@ -40,6 +49,7 @@ import {
   deletePlanningItemForCurrentUser,
   getPlanningItemForCurrentUser,
   listPlanningItemsForCurrentUser,
+  listScheduledItemsForCategory,
   updatePlanningItemForCurrentUser,
 } from "./planning-item.service";
 
@@ -51,6 +61,8 @@ const mockListByUser = vi.mocked(listPlanningItemsByUser);
 const mockSoftDelete = vi.mocked(softDeletePlanningItem);
 const mockUpdate = vi.mocked(updatePlanningItem);
 const mockFindOwnedList = vi.mocked(findOwnedList);
+const mockListScheduledByCategory = vi.mocked(listScheduledItemsByCategory);
+const mockFindOwnedCategory = vi.mocked(findOwnedCategory);
 
 const ownedList = { id: "list-1" } as List;
 
@@ -80,6 +92,9 @@ describe("createPlanningItemForCurrentUser", () => {
       priorityId: null,
       statusId: "status-default",
       dueAt: null,
+      startAt: null,
+      endAt: null,
+      allDay: false,
     });
     expect(result).toBe(created);
   });
@@ -178,6 +193,46 @@ describe("createPlanningItemForCurrentUser", () => {
       }),
     ).rejects.toThrow(NotFoundError);
   });
+
+  // Requirement 2.1/2.2/2.3: a valid schedule is forwarded verbatim to the repo.
+  it("forwards startAt/endAt/allDay to the repository on a valid schedule", async () => {
+    mockFindDefaultStatusId.mockResolvedValue("status-default");
+    mockFindDefaultItemTypeId.mockResolvedValue("item-type-default");
+    mockFindOwnedList.mockResolvedValue(ownedList);
+    mockCreate.mockResolvedValue({ id: "item-1" } as PlanningItem);
+
+    const startAt = new Date("2026-08-01T10:00:00.000Z");
+    const endAt = new Date("2026-08-01T11:00:00.000Z");
+
+    await createPlanningItemForCurrentUser({
+      title: "Meeting",
+      listId: "list-1",
+      startAt,
+      endAt,
+      allDay: true,
+    });
+
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ startAt, endAt, allDay: true }),
+    );
+  });
+
+  // Requirement 2.2: an inconsistent schedule fails before any write.
+  it("throws ValidationError and never persists when endAt precedes startAt", async () => {
+    mockFindDefaultStatusId.mockResolvedValue("status-default");
+    mockFindDefaultItemTypeId.mockResolvedValue("item-type-default");
+    mockFindOwnedList.mockResolvedValue(ownedList);
+
+    await expect(
+      createPlanningItemForCurrentUser({
+        title: "Meeting",
+        listId: "list-1",
+        startAt: new Date("2026-08-01T11:00:00.000Z"),
+        endAt: new Date("2026-08-01T10:00:00.000Z"),
+      }),
+    ).rejects.toThrow(ValidationError);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
 });
 
 describe("listPlanningItemsForCurrentUser", () => {
@@ -192,6 +247,46 @@ describe("listPlanningItemsForCurrentUser", () => {
     const result = await listPlanningItemsForCurrentUser();
 
     expect(mockListByUser).toHaveBeenCalledWith(DEV_USER_ID);
+    expect(result).toBe(items);
+  });
+});
+
+describe("listScheduledItemsForCategory", () => {
+  const from = new Date("2026-06-10T00:00:00.000Z");
+  const to = new Date("2026-06-17T00:00:00.000Z");
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Requirement 4.5: a category that is absent or owned by someone else yields
+  // a precise NotFoundError and never reaches the range query.
+  it("throws NotFoundError and never queries when the category is not owned or absent", async () => {
+    mockFindOwnedCategory.mockResolvedValue(null);
+
+    await expect(
+      listScheduledItemsForCategory("cat-missing", from, to),
+    ).rejects.toThrow(NotFoundError);
+    expect(mockFindOwnedCategory).toHaveBeenCalledWith(DEV_USER_ID, "cat-missing");
+    expect(mockListScheduledByCategory).not.toHaveBeenCalled();
+  });
+
+  // Requirement 4.1/4.2/4.3/4.4: an owned category delegates to the repo with
+  // the resolved user, category, and window, returning the items verbatim.
+  it("delegates to the repository with userId, categoryId, from and to for an owned category", async () => {
+    mockFindOwnedCategory.mockResolvedValue({ id: "cat-1" } as Category);
+    const items = [{ id: "item-1" }, { id: "item-2" }] as PlanningItem[];
+    mockListScheduledByCategory.mockResolvedValue(items);
+
+    const result = await listScheduledItemsForCategory("cat-1", from, to);
+
+    expect(mockFindOwnedCategory).toHaveBeenCalledWith(DEV_USER_ID, "cat-1");
+    expect(mockListScheduledByCategory).toHaveBeenCalledWith(
+      DEV_USER_ID,
+      "cat-1",
+      from,
+      to,
+    );
     expect(result).toBe(items);
   });
 });
@@ -285,6 +380,77 @@ describe("updatePlanningItemForCurrentUser", () => {
     await expect(
       updatePlanningItemForCurrentUser("item-1", { priorityId: "nope" }),
     ).rejects.toThrow(NotFoundError);
+  });
+
+  // Requirement 2.2: adding an endAt to an item that already has a stored
+  // startAt is valid against the EFFECTIVE (merged) schedule.
+  it("adds an endAt to an item with a stored startAt (effective schedule valid)", async () => {
+    const storedStartAt = new Date("2026-08-01T10:00:00.000Z");
+    mockFindOwned.mockResolvedValue({
+      id: "item-1",
+      startAt: storedStartAt,
+      endAt: null,
+    } as PlanningItem);
+    mockUpdate.mockResolvedValue({ id: "item-1" } as PlanningItem);
+
+    const endAt = new Date("2026-08-01T11:00:00.000Z");
+    await updatePlanningItemForCurrentUser("item-1", { endAt });
+
+    expect(mockUpdate).toHaveBeenCalledWith("item-1", { endAt });
+  });
+
+  // Requirement 2.2: the effective-schedule check compares the incoming endAt
+  // against the STORED startAt even when the payload omits startAt.
+  it("throws ValidationError when endAt precedes the stored startAt (payload omits startAt)", async () => {
+    mockFindOwned.mockResolvedValue({
+      id: "item-1",
+      startAt: new Date("2026-08-01T10:00:00.000Z"),
+      endAt: null,
+    } as PlanningItem);
+
+    await expect(
+      updatePlanningItemForCurrentUser("item-1", {
+        endAt: new Date("2026-08-01T09:00:00.000Z"),
+      }),
+    ).rejects.toThrow(ValidationError);
+    expect(mockUpdate).not.toHaveBeenCalled();
+  });
+
+  // Requirement 2.1: clearing startAt unschedules the item, so a stored endAt
+  // is cleared too even when the payload does not mention endAt.
+  it("clears a stored endAt when startAt is set to null (payload omits endAt)", async () => {
+    mockFindOwned.mockResolvedValue({
+      id: "item-1",
+      startAt: new Date("2026-08-01T10:00:00.000Z"),
+      endAt: new Date("2026-08-01T11:00:00.000Z"),
+    } as PlanningItem);
+    mockUpdate.mockResolvedValue({ id: "item-1" } as PlanningItem);
+
+    await updatePlanningItemForCurrentUser("item-1", { startAt: null });
+
+    expect(mockUpdate).toHaveBeenCalledWith("item-1", {
+      startAt: null,
+      endAt: null,
+    });
+  });
+
+  // Requirement 2.1: a schedule-only patch must not touch the separate dueAt.
+  it("does not touch dueAt when only schedule fields change", async () => {
+    mockFindOwned.mockResolvedValue({
+      id: "item-1",
+      startAt: null,
+      endAt: null,
+    } as PlanningItem);
+    mockUpdate.mockResolvedValue({ id: "item-1" } as PlanningItem);
+
+    const startAt = new Date("2026-08-01T10:00:00.000Z");
+    await updatePlanningItemForCurrentUser("item-1", { startAt });
+
+    expect(mockUpdate).toHaveBeenCalledWith("item-1", { startAt });
+    expect(mockUpdate).toHaveBeenCalledWith(
+      "item-1",
+      expect.not.objectContaining({ dueAt: expect.anything() }),
+    );
   });
 });
 

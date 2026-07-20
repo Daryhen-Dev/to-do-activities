@@ -139,6 +139,85 @@ describe("createPlanningItemSchema", () => {
 
     expect(result.success).toBe(false);
   });
+
+  // Requirement 2.1: a point-in-time schedule (a start with no end) is valid.
+  it("accepts a point schedule with startAt and no endAt", () => {
+    const result = createPlanningItemSchema.safeParse({
+      title: "Standup",
+      listId: "list-1",
+      startAt: "2026-08-01T10:00:00.000Z",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.startAt).toBeInstanceOf(Date);
+      expect(result.data.endAt).toBeUndefined();
+    }
+  });
+
+  // Requirement 2.2: a ranged schedule is valid when endAt is on/after startAt.
+  it("accepts startAt and endAt when endAt is on or after startAt", () => {
+    const result = createPlanningItemSchema.safeParse({
+      title: "Meeting",
+      listId: "list-1",
+      startAt: "2026-08-01T10:00:00.000Z",
+      endAt: "2026-08-01T11:00:00.000Z",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.startAt).toBeInstanceOf(Date);
+      expect(result.data.endAt).toBeInstanceOf(Date);
+    }
+  });
+
+  // Requirement 2.3: an all-day schedule is flagged with allDay.
+  it("accepts allDay set to true", () => {
+    const result = createPlanningItemSchema.safeParse({
+      title: "Holiday",
+      listId: "list-1",
+      startAt: "2026-08-01T00:00:00.000Z",
+      allDay: true,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.allDay).toBe(true);
+    }
+  });
+
+  // Requirement 2.1: an end without a start is not a valid schedule.
+  it("rejects endAt without startAt", () => {
+    const result = createPlanningItemSchema.safeParse({
+      title: "Meeting",
+      listId: "list-1",
+      endAt: "2026-08-01T11:00:00.000Z",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.some((issue) => issue.path[0] === "endAt"),
+      ).toBe(true);
+    }
+  });
+
+  // Requirement 2.2: an end that precedes the start is inconsistent.
+  it("rejects endAt earlier than startAt", () => {
+    const result = createPlanningItemSchema.safeParse({
+      title: "Meeting",
+      listId: "list-1",
+      startAt: "2026-08-01T11:00:00.000Z",
+      endAt: "2026-08-01T10:00:00.000Z",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.some((issue) => issue.path[0] === "endAt"),
+      ).toBe(true);
+    }
+  });
 });
 
 describe("updatePlanningItemSchema", () => {
@@ -201,5 +280,32 @@ describe("updatePlanningItemSchema", () => {
     const result = updatePlanningItemSchema.safeParse({ title: "" });
 
     expect(result.success).toBe(false);
+  });
+
+  // Requirement 2.1/2.2: a partial patch can clear the schedule with explicit
+  // null; the schema stays permissive because the service validates the
+  // EFFECTIVE (merged) schedule.
+  it("accepts an explicit null for startAt and endAt to clear the schedule", () => {
+    const result = updatePlanningItemSchema.safeParse({
+      startAt: null,
+      endAt: null,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.startAt).toBeNull();
+      expect(result.data.endAt).toBeNull();
+    }
+  });
+
+  it("accepts changing startAt to a new value", () => {
+    const result = updatePlanningItemSchema.safeParse({
+      startAt: "2026-09-01T09:00:00.000Z",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.startAt).toBeInstanceOf(Date);
+    }
   });
 });
