@@ -42,25 +42,25 @@ flowchart TD
 
 ### Phase 1 — Foundations
 
-- [ ] 1. Add the Zustand dependency
+- [x] 1. Add the Zustand dependency
   - Add `zustand` (latest 5.x) to `package.json` dependencies and install with pnpm. Confirm the lockfile updates and `pnpm build` still runs.
   - _Requirements: 6.1_
 
-- [ ] 2. Create the pure dashboard metrics module
+- [x] 2. Create the pure dashboard metrics module
   - Add `src/lib/dashboard-metrics.ts` exporting `computeDashboard(tasks, categories, lists, statuses, now)` and its `DashboardSummary` / `CategoryStats` / `DashboardData` types. Encode: open = status not `completado`/`cancelado`; completed = `completado`; overdue = open AND `dueAt` < now; due today = open AND (`dueAt`|`startAt`) in the local day; upcoming = open AND (`dueAt`|`startAt`) in `[startOfTomorrow, +7d)`; count only tasks whose `listId` is in `lists`; group by `list.categoryId`; summary totals = sum of per-category. Use local day boundaries derived from `now`.
   - _Requirements: 2.1, 2.2, 2.3, 2.4, 3.2, 3.3, 4.1, 4.2, 4.3, 6.2_
 
 ### Phase 2 — State and coverage
 
-- [ ] 3. Create the workspace store
+- [x] 3. Create the workspace store
   - Add `src/stores/workspace-store.ts` (Zustand): `categories`, `lists`, `status`, `ensureLoaded()` (fetch `/api/categories` + `/api/lists` once, guarded), `reload()`, and mutators `addCategory`/`updateCategory`/`removeCategory` (also drops the category's lists) and `addList`/`updateList`/`removeList`.
   - _Requirements: 6.1, 6.2_
 
-- [ ] 4. Unit-test the workspace store
+- [x] 4. Unit-test the workspace store
   - Vitest tests: `removeCategory` also removes its lists; add/update/remove list; `ensureLoaded` guards against duplicate fetches and populates state (mock `fetch`); `reload` refetches.
   - _Requirements: 6.1, 6.2_
 
-- [ ] 6. Unit-test the metrics module
+- [x] 6. Unit-test the metrics module
   - Exhaustive Vitest tests for `computeDashboard`: open/completed partition; overdue/due-today/upcoming bucketing across local-day boundaries; tasks in deleted (absent) lists excluded; per-category grouping via `list.categoryId`; summary totals equal the sum of categories; empty inputs return zeroed metrics.
   - _Requirements: 2.5, 3.2, 3.3, 4.1, 4.2, 4.3, 6.2_
 
