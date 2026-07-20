@@ -1,7 +1,5 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-
 import { type CalendarEvent, eventsOnDay, isSameDay } from "@/lib/calendar";
 import { cn } from "@/lib/utils";
 
@@ -9,15 +7,12 @@ import { cn } from "@/lib/utils";
  * Presentational month grid. Renders a weekday header row (Sun..Sat) and the
  * given `weeks`, placing up to `MAX_PER_DAY` event chips per day (with a
  * "+N more" overflow line). The grid fills the available height. Event chips
- * are read-only affordances that "peek" the event's details: hovering for
- * ~2 seconds (or clicking/pressing) calls `onPeek`.
+ * are read-only affordances: clicking (or keyboard-activating) one calls
+ * `onPeek` to open its details.
  */
 
 /** Max event chips rendered per day cell before collapsing into "+N more". */
 const MAX_PER_DAY = 3;
-
-/** How long the pointer must rest on an event before it peeks (ms). */
-const PEEK_DELAY_MS = 2000;
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -45,9 +40,8 @@ function chipLabel(event: CalendarEvent): string {
 }
 
 /**
- * A single event chip. Opens the details peek after the pointer rests on it for
- * `PEEK_DELAY_MS`, or immediately on click/keyboard activation (which also
- * makes it accessible on touch and via keyboard, where hover does not apply).
+ * A single event chip. Opens the details peek on click or keyboard activation
+ * (also works on touch, where hover does not apply).
  */
 function EventChip({
   event,
@@ -56,31 +50,11 @@ function EventChip({
   event: CalendarEvent;
   onPeek?: (event: CalendarEvent) => void;
 }) {
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  function clearTimer() {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-  }
-
-  // Cancel any pending timer if the chip unmounts (e.g. month change).
-  useEffect(() => clearTimer, []);
-
   return (
     <button
       type="button"
       title={chipLabel(event)}
-      onMouseEnter={() => {
-        clearTimer();
-        timerRef.current = setTimeout(() => onPeek?.(event), PEEK_DELAY_MS);
-      }}
-      onMouseLeave={clearTimer}
-      onClick={() => {
-        clearTimer();
-        onPeek?.(event);
-      }}
+      onClick={() => onPeek?.(event)}
       className="w-full truncate rounded bg-secondary px-1.5 py-0.5 text-left text-xs text-secondary-foreground hover:bg-secondary/80 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
     >
       {chipLabel(event)}
