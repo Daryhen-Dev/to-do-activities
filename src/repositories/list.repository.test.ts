@@ -7,7 +7,7 @@ import {
   findOwnedList,
   listActiveListsByCategory,
   listActiveListsByUser,
-  softDeleteList,
+  softDeleteListWithTasks,
   updateList,
 } from "./list.repository";
 
@@ -23,9 +23,19 @@ describe("list repository (integration)", () => {
   const categoryId = "dev-cat-trabajo";
   const createdListIds: string[] = [];
   let strangerUserId: string | null = null;
+  // Seeded catalog rows — the seed provisions item types and statuses but no
+  // tasks/lists, so tasks provisioned here reference these default ids.
+  let defaultItemTypeId: string;
+  let defaultStatusId: string;
 
   beforeAll(async () => {
     await prisma.category.findUniqueOrThrow({ where: { id: categoryId } });
+    const [itemType, status] = await Promise.all([
+      prisma.itemType.findFirstOrThrow({ where: { isDefault: true } }),
+      prisma.status.findFirstOrThrow({ where: { isDefault: true } }),
+    ]);
+    defaultItemTypeId = itemType.id;
+    defaultStatusId = status.id;
   });
 
   afterAll(async () => {
@@ -71,7 +81,7 @@ describe("list repository (integration)", () => {
     const found = await findOwnedList(DEV_USER_ID, list.id);
     expect(found?.id).toBe(list.id);
 
-    await softDeleteList(list.id);
+    await softDeleteListWithTasks(list.id);
     const afterDelete = await findOwnedList(DEV_USER_ID, list.id);
     expect(afterDelete).toBeNull();
 
@@ -124,12 +134,104 @@ describe("list repository (integration)", () => {
       sortOrder: undefined,
     });
     createdListIds.push(gone.id);
-    await softDeleteList(gone.id);
+    await softDeleteListWithTasks(gone.id);
 
     const lists = await listActiveListsByUser(DEV_USER_ID);
     const ids = lists.map((item) => item.id);
 
     expect(ids).toContain(live.id);
     expect(ids).not.toContain(gone.id);
+  });
+
+  it("soft-deletes the list and all of its active tasks in one transaction", async () => {
+    const list = await createList({
+      categoryId,
+      name: `Cascade list ${Date.now()}`,
+      sortOrder: undefined,
+    });
+    createdListIds.push(list.id);
+
+    const [taskA, taskB] = await Promise.all([
+      prisma.planningItem.create({
+        data: {
+          userId: DEV_USER_ID,
+          listId: list.id,
+          itemTypeId: defaultItemTypeId,
+          statusId: defaultStatusId,
+          title: `Cascade task A ${Date.now()}`,
+        },
+      }),
+      prisma.planningItem.create({
+        data: {
+          userId: DEV_USER_ID,
+          listId: list.id,
+          itemTypeId: defaultItemTypeId,
+          statusId: defaultStatusId,
+          title: `Cascade task B ${Date.now()}`,
+        },
+      }),
+    ]);
+
+    await softDeleteListWithTasks(list.id);
+
+    const [deletedList, deletedA, deletedB] = await Promise.all([
+      prisma.list.findUniqueOrThrow({ where: { id: list.id } }),
+      prisma.planningItem.findUniqueOrThrow({ where: { id: taskA.id } }),
+      prisma.planningItem.findUniqueOrThrow({ where: { id: taskB.id } }),
+    ]);
+
+    expect(deletedList.deletedAt).not.toBeNull();
+    expect(deletedA.deletedAt).not.toBeNull();
+    expect(deletedB.deletedAt).not.toBeNull();
+    // The list and its active tasks share the same `now`, so their
+    // `deletedAt` timestamps are identical.
+    expect(deletedA.deletedAt?.getTime()).toBe(deletedList.deletedAt?.getTime());
+    expect(deletedB.deletedAt?.getTime()).toBe(deletedList.deletedAt?.getTime());
+  });
+
+  it("leaves already soft-deleted tasks untouched, cascading only active tasks", async () => {
+    const list = await createList({
+      categoryId,
+      name: `Cascade skip-deleted list ${Date.now()}`,
+      sortOrder: undefined,
+    });
+    createdListIds.push(list.id);
+
+    const originalDeletedAt = new Date("2020-01-01T00:00:00.000Z");
+    const alreadyDeleted = await prisma.planningItem.create({
+      data: {
+        userId: DEV_USER_ID,
+        listId: list.id,
+        itemTypeId: defaultItemTypeId,
+        statusId: defaultStatusId,
+        title: `Already deleted task ${Date.now()}`,
+        deletedAt: originalDeletedAt,
+      },
+    });
+    const active = await prisma.planningItem.create({
+      data: {
+        userId: DEV_USER_ID,
+        listId: list.id,
+        itemTypeId: defaultItemTypeId,
+        statusId: defaultStatusId,
+        title: `Active task ${Date.now()}`,
+      },
+    });
+
+    await softDeleteListWithTasks(list.id);
+
+    const [untouched, cascaded] = await Promise.all([
+      prisma.planningItem.findUniqueOrThrow({
+        where: { id: alreadyDeleted.id },
+      }),
+      prisma.planningItem.findUniqueOrThrow({ where: { id: active.id } }),
+    ]);
+
+    // The pre-deleted task keeps its ORIGINAL timestamp — it is never
+    // re-stamped, because only active tasks (deletedAt: null) are cascaded.
+    expect(untouched.deletedAt?.getTime()).toBe(originalDeletedAt.getTime());
+    // The active task is archived with a fresh timestamp.
+    expect(cascaded.deletedAt).not.toBeNull();
+    expect(cascaded.deletedAt?.getTime()).not.toBe(originalDeletedAt.getTime());
   });
 });

@@ -125,12 +125,30 @@ export async function updateList(
 }
 
 /**
- * Archives a list by setting `deletedAt`. The service-layer ownership
- * precheck guarantees the row is live and owned before this runs.
+ * Archives a list AND all of its active tasks in a single transaction.
+ *
+ * Lists and tasks are archived via `deletedAt` (soft-delete), not physically
+ * removed. The database `ON DELETE CASCADE` FK on `planning_items.listId`
+ * only fires on a hard `DELETE`, so it does NOT propagate a soft-delete.
+ * The cascade required when a list is soft-deleted must therefore be done in
+ * application code here.
+ *
+ * Both writes run inside `prisma.$transaction` so the operation is atomic:
+ * either the list and every one of its active tasks are archived together, or
+ * nothing changes (Requirement 2.4 — no partial delete). A single `now`
+ * timestamp is shared so the list and its tasks carry identical `deletedAt`
+ * values.
+ *
+ * The service-layer ownership precheck guarantees the row is live and owned
+ * before this runs.
  */
-export async function softDeleteList(id: string): Promise<void> {
-  await prisma.list.update({
-    where: { id },
-    data: { deletedAt: new Date() },
-  });
+export async function softDeleteListWithTasks(id: string): Promise<void> {
+  const now = new Date();
+  await prisma.$transaction([
+    prisma.planningItem.updateMany({
+      where: { listId: id, deletedAt: null },
+      data: { deletedAt: now },
+    }),
+    prisma.list.update({ where: { id }, data: { deletedAt: now } }),
+  ]);
 }

@@ -38,19 +38,37 @@ describe("POST /api/planning-items", () => {
   });
 
   it("returns 201 with the created item on a valid body", async () => {
-    const created = { id: "item-1", title: "Buy milk", listId: null };
+    const created = { id: "item-1", title: "Buy milk", listId: "list-1" };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     mockCreate.mockResolvedValue(created as any);
 
-    const response = await POST(postRequest({ title: "Buy milk" }));
+    const response = await POST(
+      postRequest({ title: "Buy milk", listId: "list-1" }),
+    );
 
     expect(response.status).toBe(201);
     await expect(response.json()).resolves.toEqual(created);
-    expect(mockCreate).toHaveBeenCalledWith({ title: "Buy milk" });
+    expect(mockCreate).toHaveBeenCalledWith({
+      title: "Buy milk",
+      listId: "list-1",
+    });
   });
 
   it("returns 400 with field errors when title is missing", async () => {
-    const response = await POST(postRequest({ description: "no title" }));
+    const response = await POST(
+      postRequest({ description: "no title", listId: "list-1" }),
+    );
+
+    expect(response.status).toBe(400);
+    const payload = await response.json();
+    expect(payload.error).toBe("Validation failed");
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  // Requirement 1.1: the request is rejected with a validation error when
+  // no listId is supplied, and the service is never reached.
+  it("returns 400 with field errors when listId is missing", async () => {
+    const response = await POST(postRequest({ title: "Buy milk" }));
 
     expect(response.status).toBe(400);
     const payload = await response.json();
@@ -61,20 +79,19 @@ describe("POST /api/planning-items", () => {
   it("returns 400 when the service throws a domain ValidationError", async () => {
     mockCreate.mockRejectedValue(new ValidationError("invalid domain input"));
 
-    const response = await POST(postRequest({ title: "Buy milk" }));
+    const response = await POST(
+      postRequest({ title: "Buy milk", listId: "list-1" }),
+    );
 
     expect(response.status).toBe(400);
   });
 
-  it("returns 404 when the service surfaces an unknown reference", async () => {
-    mockCreate.mockRejectedValue(
-      new NotFoundError(
-        "One or more referenced ids (listId, itemTypeId, priorityId, statusId) do not exist.",
-      ),
-    );
+  // Requirement 1.2: a listId the caller does not own surfaces as a 404.
+  it("returns 404 when the service reports the list is not found/owned", async () => {
+    mockCreate.mockRejectedValue(new NotFoundError("list not found"));
 
     const response = await POST(
-      postRequest({ title: "Buy milk", priorityId: "does-not-exist" }),
+      postRequest({ title: "Buy milk", listId: "not-owned" }),
     );
 
     expect(response.status).toBe(404);
@@ -85,7 +102,9 @@ describe("POST /api/planning-items", () => {
       new UnauthorizedError("Authentication required."),
     );
 
-    const response = await POST(postRequest({ title: "Buy milk" }));
+    const response = await POST(
+      postRequest({ title: "Buy milk", listId: "list-1" }),
+    );
 
     expect(response.status).toBe(401);
   });
@@ -93,7 +112,9 @@ describe("POST /api/planning-items", () => {
   it("returns 500 without leaking the underlying error shape", async () => {
     mockCreate.mockRejectedValue(new Error("boom, prisma exploded"));
 
-    const response = await POST(postRequest({ title: "Buy milk" }));
+    const response = await POST(
+      postRequest({ title: "Buy milk", listId: "list-1" }),
+    );
 
     expect(response.status).toBe(500);
     const payload = await response.json();
@@ -101,13 +122,18 @@ describe("POST /api/planning-items", () => {
   });
 
   it("ignores a userId sent in the body — never forwarded to the service", async () => {
-    const created = { id: "item-1", title: "Buy milk" };
+    const created = { id: "item-1", title: "Buy milk", listId: "list-1" };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     mockCreate.mockResolvedValue(created as any);
 
-    await POST(postRequest({ title: "Buy milk", userId: "someone-else" }));
+    await POST(
+      postRequest({ title: "Buy milk", listId: "list-1", userId: "someone-else" }),
+    );
 
-    expect(mockCreate).toHaveBeenCalledWith({ title: "Buy milk" });
+    expect(mockCreate).toHaveBeenCalledWith({
+      title: "Buy milk",
+      listId: "list-1",
+    });
   });
 });
 

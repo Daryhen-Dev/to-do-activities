@@ -12,7 +12,7 @@ export interface CreatePlanningItemData {
   userId: string;
   title: string;
   description: string | null;
-  listId: string | null;
+  listId: string;
   itemTypeId: string;
   priorityId: string | null;
   statusId: string;
@@ -22,13 +22,13 @@ export interface CreatePlanningItemData {
 /**
  * Partial patch for an existing item. Only the keys present are written;
  * nullable columns accept `null` to clear them (see the schema for the
- * "unset vs omit" contract). Required columns (`itemTypeId`, `statusId`)
- * may be reassigned but never nulled.
+ * "unset vs omit" contract). Required columns (`listId`, `itemTypeId`,
+ * `statusId`) may be reassigned but never nulled.
  */
 export interface UpdatePlanningItemData {
   title?: string;
   description?: string | null;
-  listId?: string | null;
+  listId?: string;
   itemTypeId?: string;
   priorityId?: string | null;
   statusId?: string;

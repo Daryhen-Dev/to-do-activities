@@ -1,4 +1,4 @@
-import type { PlanningItem } from "@prisma/client";
+import type { List, PlanningItem } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DEV_USER_ID } from "../lib/dev-user";
 import { NotFoundError } from "../lib/errors";
@@ -19,6 +19,13 @@ vi.mock("../repositories/planning-item.repository", () => ({
   updatePlanningItem: vi.fn(),
 }));
 
+// The service prechecks list ownership through the list repository before
+// creating a task (mandatory hierarchy) — mock it here.
+vi.mock("../repositories/list.repository", () => ({
+  findOwnedList: vi.fn(),
+}));
+
+import { findOwnedList } from "../repositories/list.repository";
 import {
   createPlanningItem,
   findDefaultItemTypeId,
@@ -43,6 +50,9 @@ const mockFindOwned = vi.mocked(findOwnedPlanningItem);
 const mockListByUser = vi.mocked(listPlanningItemsByUser);
 const mockSoftDelete = vi.mocked(softDeletePlanningItem);
 const mockUpdate = vi.mocked(updatePlanningItem);
+const mockFindOwnedList = vi.mocked(findOwnedList);
+
+const ownedList = { id: "list-1" } as List;
 
 describe("createPlanningItemForCurrentUser", () => {
   beforeEach(() => {
@@ -52,16 +62,20 @@ describe("createPlanningItemForCurrentUser", () => {
   it("resolves default statusId and itemTypeId when the payload omits them", async () => {
     mockFindDefaultStatusId.mockResolvedValue("status-default");
     mockFindDefaultItemTypeId.mockResolvedValue("item-type-default");
+    mockFindOwnedList.mockResolvedValue(ownedList);
     const created = { id: "item-1" } as PlanningItem;
     mockCreate.mockResolvedValue(created);
 
-    const result = await createPlanningItemForCurrentUser({ title: "Buy milk" });
+    const result = await createPlanningItemForCurrentUser({
+      title: "Buy milk",
+      listId: "list-1",
+    });
 
     expect(mockCreate).toHaveBeenCalledWith({
       userId: DEV_USER_ID,
       title: "Buy milk",
       description: null,
-      listId: null,
+      listId: "list-1",
       itemTypeId: "item-type-default",
       priorityId: null,
       statusId: "status-default",
@@ -71,11 +85,13 @@ describe("createPlanningItemForCurrentUser", () => {
   });
 
   it("uses explicit statusId/itemTypeId from the payload instead of resolving defaults", async () => {
+    mockFindOwnedList.mockResolvedValue(ownedList);
     const created = { id: "item-1" } as PlanningItem;
     mockCreate.mockResolvedValue(created);
 
     await createPlanningItemForCurrentUser({
       title: "Buy milk",
+      listId: "list-1",
       statusId: "status-explicit",
       itemTypeId: "item-type-explicit",
     });
@@ -94,7 +110,7 @@ describe("createPlanningItemForCurrentUser", () => {
     mockFindDefaultStatusId.mockResolvedValue(null);
 
     await expect(
-      createPlanningItemForCurrentUser({ title: "Buy milk" }),
+      createPlanningItemForCurrentUser({ title: "Buy milk", listId: "list-1" }),
     ).rejects.toThrow(NotFoundError);
     expect(mockCreate).not.toHaveBeenCalled();
   });
@@ -104,14 +120,50 @@ describe("createPlanningItemForCurrentUser", () => {
     mockFindDefaultItemTypeId.mockResolvedValue(null);
 
     await expect(
-      createPlanningItemForCurrentUser({ title: "Buy milk" }),
+      createPlanningItemForCurrentUser({ title: "Buy milk", listId: "list-1" }),
     ).rejects.toThrow(NotFoundError);
     expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  // Requirement 1.2: creating a task under a list the caller does not own (or
+  // that does not exist) yields a precise not-found and never persists.
+  it("throws NotFoundError when the target list is absent or not owned", async () => {
+    mockFindDefaultStatusId.mockResolvedValue("status-default");
+    mockFindDefaultItemTypeId.mockResolvedValue("item-type-default");
+    mockFindOwnedList.mockResolvedValue(null);
+
+    await expect(
+      createPlanningItemForCurrentUser({
+        title: "Buy milk",
+        listId: "not-owned",
+      }),
+    ).rejects.toThrow(NotFoundError);
+    expect(mockFindOwnedList).toHaveBeenCalledWith(DEV_USER_ID, "not-owned");
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  // Requirement 1.3: a valid owned list is persisted with the created task.
+  it("persists the task with the provided owned listId", async () => {
+    mockFindDefaultStatusId.mockResolvedValue("status-default");
+    mockFindDefaultItemTypeId.mockResolvedValue("item-type-default");
+    mockFindOwnedList.mockResolvedValue(ownedList);
+    mockCreate.mockResolvedValue({ id: "item-1", listId: "list-1" } as PlanningItem);
+
+    await createPlanningItemForCurrentUser({
+      title: "Buy milk",
+      listId: "list-1",
+    });
+
+    expect(mockFindOwnedList).toHaveBeenCalledWith(DEV_USER_ID, "list-1");
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ listId: "list-1" }),
+    );
   });
 
   it("propagates the NotFoundError the repository throws for an unknown FK reference", async () => {
     mockFindDefaultStatusId.mockResolvedValue("status-default");
     mockFindDefaultItemTypeId.mockResolvedValue("item-type-default");
+    mockFindOwnedList.mockResolvedValue(ownedList);
     mockCreate.mockRejectedValue(
       new NotFoundError(
         "One or more referenced ids (listId, itemTypeId, priorityId, statusId) do not exist.",
@@ -121,21 +173,10 @@ describe("createPlanningItemForCurrentUser", () => {
     await expect(
       createPlanningItemForCurrentUser({
         title: "Buy milk",
+        listId: "list-1",
         priorityId: "does-not-exist",
       }),
     ).rejects.toThrow(NotFoundError);
-  });
-
-  it("passes a null listId through for quick capture (no list provided)", async () => {
-    mockFindDefaultStatusId.mockResolvedValue("status-default");
-    mockFindDefaultItemTypeId.mockResolvedValue("item-type-default");
-    mockCreate.mockResolvedValue({ id: "item-2", listId: null } as PlanningItem);
-
-    await createPlanningItemForCurrentUser({ title: "Quick capture" });
-
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ listId: null }),
-    );
   });
 });
 
@@ -202,18 +243,25 @@ describe("updatePlanningItemForCurrentUser", () => {
     expect(result).toBe(updated);
   });
 
+  it("moves a task to another list by forwarding the new listId", async () => {
+    mockFindOwned.mockResolvedValue({ id: "item-1" } as PlanningItem);
+    mockUpdate.mockResolvedValue({ id: "item-1", listId: "list-2" } as PlanningItem);
+
+    await updatePlanningItemForCurrentUser("item-1", { listId: "list-2" });
+
+    expect(mockUpdate).toHaveBeenCalledWith("item-1", { listId: "list-2" });
+  });
+
   it("passes an explicit null through to clear a nullable field", async () => {
     mockFindOwned.mockResolvedValue({ id: "item-1" } as PlanningItem);
     mockUpdate.mockResolvedValue({ id: "item-1" } as PlanningItem);
 
     await updatePlanningItemForCurrentUser("item-1", {
       dueAt: null,
-      listId: null,
     });
 
     expect(mockUpdate).toHaveBeenCalledWith("item-1", {
       dueAt: null,
-      listId: null,
     });
   });
 

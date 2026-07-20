@@ -5,8 +5,11 @@ import {
 } from "./planning-item.schema";
 
 describe("createPlanningItemSchema", () => {
-  it("accepts a payload with only a title (quick capture)", () => {
-    const result = createPlanningItemSchema.safeParse({ title: "Buy milk" });
+  it("accepts a minimal payload with a title and a listId", () => {
+    const result = createPlanningItemSchema.safeParse({
+      title: "Buy milk",
+      listId: "list-1",
+    });
 
     expect(result.success).toBe(true);
   });
@@ -24,9 +27,37 @@ describe("createPlanningItemSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  // Requirement 1.1: a task cannot be created without a list.
+  it("rejects a payload missing listId", () => {
+    const result = createPlanningItemSchema.safeParse({ title: "Buy milk" });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.some((issue) => issue.path[0] === "listId"),
+      ).toBe(true);
+    }
+  });
+
+  // Requirement 1.1: an empty-string listId is not a valid list reference.
+  it("rejects an empty-string listId", () => {
+    const result = createPlanningItemSchema.safeParse({
+      title: "Buy milk",
+      listId: "",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.some((issue) => issue.path[0] === "listId"),
+      ).toBe(true);
+    }
+  });
+
   it("rejects a payload missing title", () => {
     const result = createPlanningItemSchema.safeParse({
       description: "no title here",
+      listId: "list-1",
     });
 
     expect(result.success).toBe(false);
@@ -38,13 +69,19 @@ describe("createPlanningItemSchema", () => {
   });
 
   it("rejects an empty-string title", () => {
-    const result = createPlanningItemSchema.safeParse({ title: "" });
+    const result = createPlanningItemSchema.safeParse({
+      title: "",
+      listId: "list-1",
+    });
 
     expect(result.success).toBe(false);
   });
 
   it("rejects a whitespace-only title", () => {
-    const result = createPlanningItemSchema.safeParse({ title: "   " });
+    const result = createPlanningItemSchema.safeParse({
+      title: "   ",
+      listId: "list-1",
+    });
 
     expect(result.success).toBe(false);
   });
@@ -52,6 +89,7 @@ describe("createPlanningItemSchema", () => {
   it("rejects a title longer than 500 characters", () => {
     const result = createPlanningItemSchema.safeParse({
       title: "a".repeat(501),
+      listId: "list-1",
     });
 
     expect(result.success).toBe(false);
@@ -60,6 +98,7 @@ describe("createPlanningItemSchema", () => {
   it("accepts a title exactly 500 characters long", () => {
     const result = createPlanningItemSchema.safeParse({
       title: "a".repeat(500),
+      listId: "list-1",
     });
 
     expect(result.success).toBe(true);
@@ -68,6 +107,7 @@ describe("createPlanningItemSchema", () => {
   it("ignores a userId field if present (not part of the schema)", () => {
     const result = createPlanningItemSchema.safeParse({
       title: "Buy milk",
+      listId: "list-1",
       userId: "someone-elses-id",
     });
 
@@ -80,6 +120,7 @@ describe("createPlanningItemSchema", () => {
   it("coerces an ISO datetime string in dueAt to a Date", () => {
     const result = createPlanningItemSchema.safeParse({
       title: "Buy milk",
+      listId: "list-1",
       dueAt: "2026-08-01T10:00:00.000Z",
     });
 
@@ -92,6 +133,7 @@ describe("createPlanningItemSchema", () => {
   it("rejects an unparseable dueAt value", () => {
     const result = createPlanningItemSchema.safeParse({
       title: "Buy milk",
+      listId: "list-1",
       dueAt: "not-a-date",
     });
 
@@ -112,10 +154,18 @@ describe("updatePlanningItemSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  it("accepts a listId to move a task to another list", () => {
+    const result = updatePlanningItemSchema.safeParse({ listId: "list-2" });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.listId).toBe("list-2");
+    }
+  });
+
   it("accepts an explicit null on nullable fields to clear them", () => {
     const result = updatePlanningItemSchema.safeParse({
       description: null,
-      listId: null,
       priorityId: null,
       dueAt: null,
     });
@@ -123,8 +173,16 @@ describe("updatePlanningItemSchema", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.dueAt).toBeNull();
-      expect(result.data.listId).toBeNull();
+      expect(result.data.description).toBeNull();
     }
+  });
+
+  // Requirement 5.2: a task can never be detached from all lists, so the
+  // update contract must reject an explicit null listId.
+  it("rejects a null listId (a task cannot be detached from its list)", () => {
+    const result = updatePlanningItemSchema.safeParse({ listId: null });
+
+    expect(result.success).toBe(false);
   });
 
   it("accepts an archived boolean toggle", () => {

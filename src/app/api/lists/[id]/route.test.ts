@@ -152,6 +152,20 @@ describe("DELETE /api/lists/[id]", () => {
     expect(mockDelete).toHaveBeenCalledWith("list-1");
   });
 
+  // Requirement 2.1/2.2: the route delegates deletion to the service, which
+  // cascades the soft-delete to the list's tasks. The end-to-end cascade
+  // (list + tasks archived together) is covered by the repository integration
+  // test; here we assert the route invokes that cascading service exactly once
+  // for the resolved list id.
+  it("delegates to the cascading service delete for the resolved list id", async () => {
+    mockDelete.mockResolvedValue();
+
+    await DELETE(new Request("http://localhost"), context("list-42"));
+
+    expect(mockDelete).toHaveBeenCalledTimes(1);
+    expect(mockDelete).toHaveBeenCalledWith("list-42");
+  });
+
   it("returns 404 when the list is not found or not owned", async () => {
     mockDelete.mockRejectedValue(new NotFoundError("list not found"));
 
