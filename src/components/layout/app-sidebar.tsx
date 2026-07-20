@@ -350,8 +350,14 @@ function CategoryNode({
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Expand the group that contains the list currently being viewed.
-  const containsActiveList = lists.some((list) => list.id === activeListId);
+  // Controlled open state, seeded once from whether this category holds the
+  // list currently in view. It must be controlled (not `defaultOpen`): the
+  // sidebar's data loads asynchronously, so an uncontrolled default would
+  // change after mount and Base UI warns about that. The initializer captures
+  // the value at mount; the user drives it from there via the trigger.
+  const [open, setOpen] = useState(() =>
+    lists.some((list) => list.id === activeListId),
+  );
 
   async function handleConfirmDelete() {
     setIsDeleting(true);
@@ -362,7 +368,8 @@ function CategoryNode({
 
   return (
     <Collapsible
-      defaultOpen={containsActiveList}
+      open={open}
+      onOpenChange={setOpen}
       className="group/collapsible"
       render={<SidebarMenuItem />}
     >
