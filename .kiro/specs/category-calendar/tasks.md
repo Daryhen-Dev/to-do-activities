@@ -40,21 +40,21 @@ flowchart TD
 
 ### Phase 1 — Pure logic and state
 
-- [ ] 1. Create the pure calendar helpers
+- [x] 1. Create the pure calendar helpers
   - Add `src/lib/calendar.ts` with the `CalendarEvent` type and `CalendarView` type, plus `buildMonthGrid(anchor, weekStartsOn?)`, `rangeFor(view, anchor)`, `eventsOnDay(events, day)`, `groupEventsByDay(events, from)`, and `toCalendarEvents(rows)`. Use local date arithmetic; grid emits whole week-aligned rows covering the anchor month; day membership uses interval intersection `[startAt, endAt ?? startAt]`; agenda window is `[startOfToday, +30d)`.
   - _Requirements: 2.1, 2.2, 2.4, 3.1, 4.4, 5.1, 6.1_
 
-- [ ] 3. Create the calendar view store
+- [x] 3. Create the calendar view store
   - Add `src/stores/calendar-store.ts` (Zustand): `view`, `anchorDate`, `setView`, `goToPrevMonth`, `goToNextMonth`, `goToToday`. View/anchor only — no event data.
   - _Requirements: 4.1, 4.2, 4.3_
 
 ### Phase 2 — Coverage and presentational pieces
 
-- [ ] 2. Unit-test the calendar helpers
+- [x] 2. Unit-test the calendar helpers
   - Vitest tests in `src/lib/calendar.test.ts`: `buildMonthGrid` (rows divisible by 7, week-start alignment, month coverage across a 28/30/31-day month and a month whose 1st is the week-start); `rangeFor` (month vs agenda windows, `from < to`); `eventsOnDay` (single-day hit/miss, multi-day spanning, all-day, local-day boundaries); `groupEventsByDay` (ordering, grouping by local day, `from` filter); `toCalendarEvents` (ISO parsing, null `endAt`).
   - _Requirements: 2.1, 2.2, 2.4, 3.1, 4.4_
 
-- [ ] 4. Unit-test the calendar view store
+- [x] 4. Unit-test the calendar view store
   - Vitest tests in `src/stores/calendar-store.test.ts`: `setView`; `goToPrevMonth`/`goToNextMonth` shift the anchor by exactly one month including year rollover (Dec→Jan, Jan→Dec); `goToToday` resets to the current month. Reset the singleton store in `beforeEach`.
   - _Requirements: 4.1, 4.3_
 
