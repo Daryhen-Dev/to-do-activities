@@ -9,25 +9,57 @@ import {
   buildMonthGrid,
   type CalendarEvent,
   groupEventsByDay,
+  isSameDay,
   rangeFor,
   toCalendarEvents,
 } from "@/lib/calendar";
 import { useCalendarStore } from "@/stores/calendar-store";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { AgendaList } from "./agenda-list";
 import { CalendarToolbar } from "./calendar-toolbar";
 import { MonthGrid } from "./month-grid";
 
 /**
  * Container for a single category's calendar. Owns event data fetching for the
- * currently visible range (derived from the shared view/anchor store), and
- * renders the toolbar plus either the month grid or the agenda list. Fetching
- * is range-driven: whenever the category or the `[from, to)` window changes,
- * it reloads. Read-only — no mutations.
+ * currently visible range (derived from the shared view/anchor store), fills
+ * the available screen space, and opens a details Sheet when an event is peeked
+ * (hover-hold or click) in the month view. Read-only — no mutations.
  */
 
 interface CategoryCalendarProps {
   categoryId: string;
   categoryName: string;
+}
+
+const DATE_FORMAT: Intl.DateTimeFormatOptions = {
+  weekday: "long",
+  month: "long",
+  day: "numeric",
+  year: "numeric",
+};
+const TIME_FORMAT: Intl.DateTimeFormatOptions = {
+  hour: "2-digit",
+  minute: "2-digit",
+};
+
+/** Human "when" line for the details Sheet (local date + time or all-day). */
+function formatWhen(event: CalendarEvent): string {
+  const date = event.startAt.toLocaleDateString(undefined, DATE_FORMAT);
+  if (event.allDay) return `${date} · All day`;
+  const start = event.startAt.toLocaleTimeString(undefined, TIME_FORMAT);
+  if (!event.endAt) return `${date} · ${start}`;
+  const end = event.endAt.toLocaleTimeString(undefined, TIME_FORMAT);
+  if (isSameDay(event.startAt, event.endAt)) {
+    return `${date} · ${start} – ${end}`;
+  }
+  const endDate = event.endAt.toLocaleDateString(undefined, DATE_FORMAT);
+  return `${date} ${start} – ${endDate} ${end}`;
 }
 
 export function CategoryCalendar({
@@ -43,6 +75,7 @@ export function CategoryCalendar({
 
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [peekEvent, setPeekEvent] = useState<CalendarEvent | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -81,7 +114,7 @@ export function CategoryCalendar({
   );
 
   return (
-    <div className="grid gap-4">
+    <div className="flex flex-1 flex-col gap-4">
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-semibold">{categoryName}</h1>
         {loading ? (
@@ -95,14 +128,44 @@ export function CategoryCalendar({
       <CalendarToolbar />
 
       {view === "month" ? (
-        <MonthGrid
-          weeks={weeks}
-          events={events}
-          anchorMonth={anchorDate.getMonth()}
-        />
+        <div className="min-h-0 flex-1">
+          <MonthGrid
+            weeks={weeks}
+            events={events}
+            anchorMonth={anchorDate.getMonth()}
+            onPeek={setPeekEvent}
+          />
+        </div>
       ) : (
         <AgendaList groups={groups} />
       )}
+
+      <Sheet
+        open={peekEvent !== null}
+        onOpenChange={(open) => {
+          if (!open) setPeekEvent(null);
+        }}
+      >
+        <SheetContent side="right">
+          {peekEvent ? (
+            <>
+              <SheetHeader>
+                <SheetTitle>{peekEvent.title}</SheetTitle>
+                <SheetDescription>{formatWhen(peekEvent)}</SheetDescription>
+              </SheetHeader>
+              {peekEvent.description ? (
+                <p className="px-4 text-sm whitespace-pre-wrap">
+                  {peekEvent.description}
+                </p>
+              ) : (
+                <p className="px-4 text-sm text-muted-foreground">
+                  No description.
+                </p>
+              )}
+            </>
+          ) : null}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

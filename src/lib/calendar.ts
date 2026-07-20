@@ -17,6 +17,8 @@ export interface CalendarEvent {
   startAt: Date;
   endAt: Date | null;
   allDay: boolean;
+  /** Optional details shown in the event peek panel. */
+  description?: string | null;
 }
 
 /** How many days ahead the agenda window looks. */
@@ -162,6 +164,7 @@ export function toCalendarEvents(rows: PlanningItem[]): CalendarEvent[] {
       startAt,
       endAt: end && !Number.isNaN(end.getTime()) ? end : null,
       allDay: row.allDay,
+      description: row.description ?? null,
     });
   }
   return events;

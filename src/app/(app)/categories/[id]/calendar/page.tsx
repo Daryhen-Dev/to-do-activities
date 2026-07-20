@@ -33,7 +33,7 @@ export default async function CategoryCalendarPage({
   }
 
   return (
-    <main className="mx-auto w-full max-w-4xl flex-1 px-6 py-10">
+    <main className="flex flex-1 flex-col px-4 py-6 sm:px-6">
       <CategoryCalendar categoryId={category.id} categoryName={category.name} />
     </main>
   );

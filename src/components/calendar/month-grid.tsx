@@ -1,15 +1,23 @@
+"use client";
+
+import { useEffect, useRef } from "react";
+
 import { type CalendarEvent, eventsOnDay, isSameDay } from "@/lib/calendar";
 import { cn } from "@/lib/utils";
 
 /**
  * Presentational month grid. Renders a weekday header row (Sun..Sat) and the
  * given `weeks`, placing up to `MAX_PER_DAY` event chips per day (with a
- * "+N more" overflow line). Purely read-only: no click handlers, no data
- * fetching — all inputs arrive as props.
+ * "+N more" overflow line). The grid fills the available height. Event chips
+ * are read-only affordances that "peek" the event's details: hovering for
+ * ~2 seconds (or clicking/pressing) calls `onPeek`.
  */
 
 /** Max event chips rendered per day cell before collapsing into "+N more". */
 const MAX_PER_DAY = 3;
+
+/** How long the pointer must rest on an event before it peeks (ms). */
+const PEEK_DELAY_MS = 2000;
 
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -25,6 +33,8 @@ interface MonthGridProps {
   events: CalendarEvent[];
   /** 0-based month of the anchor; days outside it are dimmed. */
   anchorMonth: number;
+  /** Called when an event is peeked (hover-hold or click) to show its details. */
+  onPeek?: (event: CalendarEvent) => void;
 }
 
 /** The chip label: local start time (or "All day") plus the event title. */
@@ -34,11 +44,60 @@ function chipLabel(event: CalendarEvent): string {
   return `${time} · ${event.title}`;
 }
 
-export function MonthGrid({ weeks, events, anchorMonth }: MonthGridProps) {
+/**
+ * A single event chip. Opens the details peek after the pointer rests on it for
+ * `PEEK_DELAY_MS`, or immediately on click/keyboard activation (which also
+ * makes it accessible on touch and via keyboard, where hover does not apply).
+ */
+function EventChip({
+  event,
+  onPeek,
+}: {
+  event: CalendarEvent;
+  onPeek?: (event: CalendarEvent) => void;
+}) {
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function clearTimer() {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }
+
+  // Cancel any pending timer if the chip unmounts (e.g. month change).
+  useEffect(() => clearTimer, []);
+
+  return (
+    <button
+      type="button"
+      title={chipLabel(event)}
+      onMouseEnter={() => {
+        clearTimer();
+        timerRef.current = setTimeout(() => onPeek?.(event), PEEK_DELAY_MS);
+      }}
+      onMouseLeave={clearTimer}
+      onClick={() => {
+        clearTimer();
+        onPeek?.(event);
+      }}
+      className="w-full truncate rounded bg-secondary px-1.5 py-0.5 text-left text-xs text-secondary-foreground hover:bg-secondary/80 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+    >
+      {chipLabel(event)}
+    </button>
+  );
+}
+
+export function MonthGrid({
+  weeks,
+  events,
+  anchorMonth,
+  onPeek,
+}: MonthGridProps) {
   const today = new Date();
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-border">
       <div className="grid grid-cols-7 border-b border-border bg-muted/50">
         {WEEKDAY_LABELS.map((label) => (
           <div
@@ -50,7 +109,10 @@ export function MonthGrid({ weeks, events, anchorMonth }: MonthGridProps) {
         ))}
       </div>
 
-      <div className="grid grid-cols-7">
+      <div
+        className="grid flex-1 grid-cols-7"
+        style={{ gridAutoRows: "minmax(6rem, 1fr)" }}
+      >
         {weeks.map((week) =>
           week.map((day) => {
             const inMonth = day.getMonth() === anchorMonth;
@@ -63,7 +125,7 @@ export function MonthGrid({ weeks, events, anchorMonth }: MonthGridProps) {
               <div
                 key={day.toISOString()}
                 className={cn(
-                  "min-h-24 border-b border-r border-border p-1.5 last:border-r-0",
+                  "flex min-h-0 flex-col border-b border-r border-border p-1.5 last:border-r-0",
                   !inMonth && "bg-muted/30 text-muted-foreground",
                 )}
               >
@@ -79,15 +141,9 @@ export function MonthGrid({ weeks, events, anchorMonth }: MonthGridProps) {
                   </span>
                 </div>
 
-                <div className="mt-1 grid gap-1">
+                <div className="mt-1 grid min-h-0 gap-1 overflow-hidden">
                   {visible.map((event) => (
-                    <div
-                      key={event.id}
-                      title={chipLabel(event)}
-                      className="truncate rounded bg-secondary px-1.5 py-0.5 text-xs text-secondary-foreground"
-                    >
-                      {chipLabel(event)}
-                    </div>
+                    <EventChip key={event.id} event={event} onPeek={onPeek} />
                   ))}
                   {overflow > 0 ? (
                     <div className="px-1.5 text-xs text-muted-foreground">
