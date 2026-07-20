@@ -35,7 +35,10 @@ export function DetailSheet({
 }: DetailSheetProps) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom" className="h-[50vh] rounded-t-xl">
+      <SheetContent
+        side="bottom"
+        className="rounded-t-xl data-[side=bottom]:h-[50vh]"
+      >
         {/* Grab handle: signals a read-only "peek" drawer. */}
         <div
           aria-hidden

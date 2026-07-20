@@ -44,7 +44,7 @@ export function FormSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
-        className="w-full gap-0 sm:w-1/2 sm:max-w-none"
+        className="gap-0 data-[side=right]:w-full data-[side=right]:sm:w-1/2 data-[side=right]:sm:max-w-none"
       >
         <SheetHeader>
           <SheetTitle>{title}</SheetTitle>
