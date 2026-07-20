@@ -10,16 +10,18 @@ import type {
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { CreateTaskForm } from "./create-task-form";
 import { TaskItem } from "./task-item";
 import type { TaskEditPayload } from "./task-edit-dialog";
-import {
-  LIST_FILTER_ALL,
-  LIST_FILTER_NONE,
-  TaskFilters,
-} from "./task-filters";
 
 const JSON_HEADERS = { "content-type": "application/json" };
+
+interface TaskListProps {
+  /** The list whose tasks are shown and to which new tasks are added. */
+  listId: string;
+}
 
 async function errorMessage(res: Response, fallback: string): Promise<string> {
   try {
@@ -30,14 +32,13 @@ async function errorMessage(res: Response, fallback: string): Promise<string> {
   }
 }
 
-export function TaskList() {
+export function TaskList({ listId }: TaskListProps) {
   const [items, setItems] = useState<PlanningItem[]>([]);
   const [statuses, setStatuses] = useState<Status[]>([]);
   const [priorities, setPriorities] = useState<Priority[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [lists, setLists] = useState<List[]>([]);
   const [loading, setLoading] = useState(true);
-  const [listFilter, setListFilter] = useState<string>(LIST_FILTER_ALL);
   const [hideCompleted, setHideCompleted] = useState(false);
 
   useEffect(() => {
@@ -93,18 +94,16 @@ export function TaskList() {
   const isCompleted = (item: PlanningItem): boolean =>
     completedStatus !== undefined && item.statusId === completedStatus.id;
 
-  const visibleItems = items.filter((item) => {
-    if (hideCompleted && isCompleted(item)) return false;
-    if (listFilter === LIST_FILTER_ALL) return true;
-    if (listFilter === LIST_FILTER_NONE) return item.listId === null;
-    return item.listId === listFilter;
-  });
+  const listItems = items.filter((item) => item.listId === listId);
+  const visibleItems = listItems.filter(
+    (item) => !(hideCompleted && isCompleted(item)),
+  );
 
   async function handleCreate(title: string) {
     const res = await fetch("/api/planning-items", {
       method: "POST",
       headers: JSON_HEADERS,
-      body: JSON.stringify({ title }),
+      body: JSON.stringify({ title, listId }),
     });
     if (!res.ok) {
       toast.error("Failed to add task");
@@ -184,22 +183,23 @@ export function TaskList() {
     <div className="grid gap-4">
       <CreateTaskForm onCreate={handleCreate} />
 
-      {!loading && items.length > 0 ? (
-        <TaskFilters
-          categories={categories}
-          lists={lists}
-          listFilter={listFilter}
-          onListFilterChange={setListFilter}
-          hideCompleted={hideCompleted}
-          onHideCompletedChange={setHideCompleted}
-        />
+      {!loading && listItems.length > 0 ? (
+        <div className="flex items-center justify-end">
+          <Label className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Checkbox
+              checked={hideCompleted}
+              onCheckedChange={(value) => setHideCompleted(value === true)}
+            />
+            Hide completed
+          </Label>
+        </div>
       ) : null}
 
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
-      ) : items.length === 0 ? (
+      ) : listItems.length === 0 ? (
         <p className="text-sm text-muted-foreground">
-          No tasks yet. Add your first one above.
+          No tasks in this list yet. Add your first one above.
         </p>
       ) : visibleItems.length === 0 ? (
         <p className="text-sm text-muted-foreground">

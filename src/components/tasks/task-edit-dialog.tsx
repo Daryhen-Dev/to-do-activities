@@ -36,9 +36,8 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
-/** Sentinel select values for "none" (map to `null` on submit). */
+/** Sentinel select value for "no priority" (maps to `null` on submit). */
 const NO_PRIORITY = "none";
-const NO_LIST = "none";
 
 const editTaskSchema = z.object({
   title: z
@@ -61,7 +60,7 @@ export interface TaskEditPayload {
   title: string;
   description: string | null;
   priorityId: string | null;
-  listId: string | null;
+  listId: string;
   dueAt: string | null;
 }
 
@@ -96,7 +95,7 @@ export function TaskEditDialog({
     title: item.title,
     description: item.description ?? "",
     priorityId: item.priorityId ?? NO_PRIORITY,
-    listId: item.listId ?? NO_LIST,
+    listId: item.listId,
     dueAt: toDateInputValue(item.dueAt),
   });
 
@@ -119,7 +118,7 @@ export function TaskEditDialog({
       description: values.description.trim() ? values.description.trim() : null,
       priorityId:
         values.priorityId === NO_PRIORITY ? null : values.priorityId,
-      listId: values.listId === NO_LIST ? null : values.listId,
+      listId: values.listId,
       dueAt: values.dueAt ? values.dueAt : null,
     });
     if (succeeded) {
@@ -183,7 +182,6 @@ export function TaskEditDialog({
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
-                      <SelectItem value={NO_LIST}>No list</SelectItem>
                       {categories.map((category) => {
                         const categoryLists = lists.filter(
                           (list) => list.categoryId === category.id,
