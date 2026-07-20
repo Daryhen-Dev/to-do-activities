@@ -3,10 +3,11 @@
 import type { Category, List, PlanningItem, Priority } from "@prisma/client";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useState, type ReactElement } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -25,6 +26,7 @@ import {
   FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -39,20 +41,41 @@ import { Textarea } from "@/components/ui/textarea";
 /** Sentinel select value for "no priority" (maps to `null` on submit). */
 const NO_PRIORITY = "none";
 
-const editTaskSchema = z.object({
-  title: z
-    .string()
-    .trim()
-    .min(1, "Title is required")
-    .max(500, "Title must be at most 500 characters"),
-  description: z
-    .string()
-    .trim()
-    .max(2000, "Description must be at most 2000 characters"),
-  priorityId: z.string(),
-  listId: z.string(),
-  dueAt: z.string(),
-});
+const editTaskSchema = z
+  .object({
+    title: z
+      .string()
+      .trim()
+      .min(1, "Title is required")
+      .max(500, "Title must be at most 500 characters"),
+    description: z
+      .string()
+      .trim()
+      .max(2000, "Description must be at most 2000 characters"),
+    priorityId: z.string(),
+    listId: z.string(),
+    dueAt: z.string(),
+    allDay: z.boolean(),
+    // Empty string means "unset". Format matches `allDay` (date vs datetime-local).
+    startAt: z.string(),
+    endAt: z.string(),
+  })
+  // An end requires a start.
+  .refine((data) => !(data.endAt !== "" && data.startAt === ""), {
+    message: "Set a start before an end",
+    path: ["endAt"],
+  })
+  // End must be on or after start when both are set.
+  .refine(
+    (data) => {
+      if (data.startAt === "" || data.endAt === "") return true;
+      const start = new Date(data.startAt).getTime();
+      const end = new Date(data.endAt).getTime();
+      if (Number.isNaN(start) || Number.isNaN(end)) return true;
+      return end >= start;
+    },
+    { message: "End must be on or after start", path: ["endAt"] },
+  );
 
 type EditTaskValues = z.infer<typeof editTaskSchema>;
 
@@ -62,6 +85,9 @@ export interface TaskEditPayload {
   priorityId: string | null;
   listId: string;
   dueAt: string | null;
+  startAt?: string | null;
+  endAt?: string | null;
+  allDay?: boolean;
 }
 
 interface TaskEditDialogProps {
@@ -81,6 +107,52 @@ function toDateInputValue(value: Date | null): string {
   return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
 }
 
+/** Zero-pads a number to two digits (e.g. 3 -> "03"). */
+function pad(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+/**
+ * Parses a value into a local `Date`, or `null` when empty/invalid.
+ * Date-only strings (`YYYY-MM-DD`) are parsed as UTC by the `Date` constructor,
+ * so they are normalized to local wall-clock time before parsing to avoid drift.
+ */
+function toLocalDate(value: Date | string | null): Date | null {
+  if (value === null || value === "") return null;
+  let input: Date | string = value;
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    input = `${value}T00:00:00`;
+  }
+  const date = new Date(input);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/** Value -> local `YYYY-MM-DDTHH:mm` for a datetime-local input ("" when unset). */
+function toDateTimeLocalValue(value: Date | string | null): string {
+  const date = toLocalDate(value);
+  if (!date) return "";
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(
+    date.getDate(),
+  )}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/** Value -> local `YYYY-MM-DD` for a date input ("" when unset). */
+function toDateValue(value: Date | string | null): string {
+  const date = toLocalDate(value);
+  if (!date) return "";
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+/**
+ * Converts a form string (local date or datetime-local) to an ISO UTC string.
+ * "" -> null. For all-day values the local midnight is used.
+ */
+function toIsoUtc(value: string, allDay: boolean): string | null {
+  if (value === "") return null;
+  const date = new Date(allDay ? `${value}T00:00:00` : value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
 export function TaskEditDialog({
   item,
   priorities,
@@ -97,6 +169,13 @@ export function TaskEditDialog({
     priorityId: item.priorityId ?? NO_PRIORITY,
     listId: item.listId,
     dueAt: toDateInputValue(item.dueAt),
+    allDay: item.allDay,
+    startAt: item.allDay
+      ? toDateValue(item.startAt)
+      : toDateTimeLocalValue(item.startAt),
+    endAt: item.allDay
+      ? toDateValue(item.endAt)
+      : toDateTimeLocalValue(item.endAt),
   });
 
   const form = useForm<EditTaskValues>({
@@ -112,7 +191,30 @@ export function TaskEditDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, item]);
 
+  const allDay = useWatch({ control: form.control, name: "allDay" });
+
+  /**
+   * Reformats the current start/end values between date and datetime-local
+   * formats so the inputs stay valid. Runs from the checkbox event handler
+   * (not an effect) because `setState` in effects is disallowed by lint.
+   */
+  function handleAllDayChange(checked: boolean) {
+    const currentStart = form.getValues("startAt");
+    const currentEnd = form.getValues("endAt");
+    form.setValue("allDay", checked);
+    if (checked) {
+      form.setValue("startAt", toDateValue(currentStart || null));
+      form.setValue("endAt", toDateValue(currentEnd || null));
+    } else {
+      form.setValue("startAt", toDateTimeLocalValue(currentStart || null));
+      form.setValue("endAt", toDateTimeLocalValue(currentEnd || null));
+    }
+  }
+
   async function handleSubmit(values: EditTaskValues) {
+    const startAt = toIsoUtc(values.startAt, values.allDay);
+    // Clearing the start clears the whole schedule.
+    const endAt = startAt === null ? null : toIsoUtc(values.endAt, values.allDay);
     const succeeded = await onSubmit({
       title: values.title,
       description: values.description.trim() ? values.description.trim() : null,
@@ -120,6 +222,9 @@ export function TaskEditDialog({
         values.priorityId === NO_PRIORITY ? null : values.priorityId,
       listId: values.listId,
       dueAt: values.dueAt ? values.dueAt : null,
+      startAt,
+      endAt,
+      allDay: values.allDay,
     });
     if (succeeded) {
       setOpen(false);
@@ -242,6 +347,64 @@ export function TaskEditDialog({
                 </FormItem>
               )}
             />
+
+            <div className="grid gap-3 rounded-md border p-3">
+              <p className="text-sm font-medium">Schedule</p>
+              <FormField
+                control={form.control}
+                name="allDay"
+                render={({ field }) => (
+                  <FormItem>
+                    <Label className="flex items-center gap-2 text-sm font-normal">
+                      <FormControl>
+                        <Checkbox
+                          checked={field.value}
+                          onCheckedChange={(checked) =>
+                            handleAllDayChange(checked === true)
+                          }
+                        />
+                      </FormControl>
+                      All day
+                    </Label>
+                  </FormItem>
+                )}
+              />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <FormField
+                  control={form.control}
+                  name="startAt"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Start</FormLabel>
+                      <FormControl>
+                        <Input
+                          type={allDay ? "date" : "datetime-local"}
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="endAt"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>End</FormLabel>
+                      <FormControl>
+                        <Input
+                          type={allDay ? "date" : "datetime-local"}
+                          {...field}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+            </div>
+
             <DialogFooter>
               <Button
                 type="button"
