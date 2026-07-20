@@ -1,17 +1,28 @@
 "use client";
 
-import type { PlanningItem, Status } from "@prisma/client";
+import type { PlanningItem, Priority, Status } from "@prisma/client";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { CreateTaskForm } from "./create-task-form";
 import { TaskItem } from "./task-item";
+import type { TaskEditPayload } from "./task-edit-dialog";
 
 const JSON_HEADERS = { "content-type": "application/json" };
+
+async function errorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: string };
+    return body.error ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 export function TaskList() {
   const [items, setItems] = useState<PlanningItem[]>([]);
   const [statuses, setStatuses] = useState<Status[]>([]);
+  const [priorities, setPriorities] = useState<Priority[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -19,20 +30,23 @@ export function TaskList() {
 
     async function load() {
       try {
-        const [itemsRes, statusesRes] = await Promise.all([
+        const [itemsRes, statusesRes, prioritiesRes] = await Promise.all([
           fetch("/api/planning-items"),
           fetch("/api/statuses"),
+          fetch("/api/priorities"),
         ]);
-        if (!itemsRes.ok || !statusesRes.ok) {
+        if (!itemsRes.ok || !statusesRes.ok || !prioritiesRes.ok) {
           throw new Error("request failed");
         }
-        const [itemsData, statusesData] = (await Promise.all([
+        const [itemsData, statusesData, prioritiesData] = (await Promise.all([
           itemsRes.json(),
           statusesRes.json(),
-        ])) as [PlanningItem[], Status[]];
+          prioritiesRes.json(),
+        ])) as [PlanningItem[], Status[], Priority[]];
         if (!active) return;
         setItems(itemsData);
         setStatuses(statusesData);
+        setPriorities(prioritiesData);
       } catch {
         if (active) toast.error("Failed to load your tasks");
       } finally {
@@ -49,6 +63,9 @@ export function TaskList() {
   const completedStatus = statuses.find((status) => status.key === "completado");
   const defaultStatus = statuses.find((status) => status.isDefault);
   const statusById = new Map(statuses.map((status) => [status.id, status]));
+  const priorityById = new Map(
+    priorities.map((priority) => [priority.id, priority]),
+  );
 
   async function handleCreate(title: string) {
     const res = await fetch("/api/planning-items", {
@@ -97,6 +114,26 @@ export function TaskList() {
     }
   }
 
+  async function handleUpdate(
+    id: string,
+    payload: TaskEditPayload,
+  ): Promise<boolean> {
+    const res = await fetch(`/api/planning-items/${id}`, {
+      method: "PATCH",
+      headers: JSON_HEADERS,
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      toast.error(await errorMessage(res, "Failed to update task"));
+      return false;
+    }
+    const updated = (await res.json()) as PlanningItem;
+    setItems((prev) =>
+      prev.map((current) => (current.id === id ? updated : current)),
+    );
+    return true;
+  }
+
   async function handleDelete(item: PlanningItem) {
     const snapshot = items;
     setItems((prev) => prev.filter((current) => current.id !== item.id));
@@ -131,7 +168,14 @@ export function TaskList() {
                 item.statusId === completedStatus.id
               }
               statusName={statusById.get(item.statusId)?.name}
+              priorityName={
+                item.priorityId
+                  ? priorityById.get(item.priorityId)?.name
+                  : undefined
+              }
+              priorities={priorities}
               onToggleComplete={handleToggleComplete}
+              onUpdate={handleUpdate}
               onDelete={handleDelete}
             />
           ))}
