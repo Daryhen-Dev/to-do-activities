@@ -13,6 +13,11 @@ import { toast } from "sonner";
 import { CreateTaskForm } from "./create-task-form";
 import { TaskItem } from "./task-item";
 import type { TaskEditPayload } from "./task-edit-dialog";
+import {
+  LIST_FILTER_ALL,
+  LIST_FILTER_NONE,
+  TaskFilters,
+} from "./task-filters";
 
 const JSON_HEADERS = { "content-type": "application/json" };
 
@@ -32,6 +37,8 @@ export function TaskList() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [lists, setLists] = useState<List[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listFilter, setListFilter] = useState<string>(LIST_FILTER_ALL);
+  const [hideCompleted, setHideCompleted] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -82,6 +89,16 @@ export function TaskList() {
     priorities.map((priority) => [priority.id, priority]),
   );
   const listById = new Map(lists.map((list) => [list.id, list]));
+
+  const isCompleted = (item: PlanningItem): boolean =>
+    completedStatus !== undefined && item.statusId === completedStatus.id;
+
+  const visibleItems = items.filter((item) => {
+    if (hideCompleted && isCompleted(item)) return false;
+    if (listFilter === LIST_FILTER_ALL) return true;
+    if (listFilter === LIST_FILTER_NONE) return item.listId === null;
+    return item.listId === listFilter;
+  });
 
   async function handleCreate(title: string) {
     const res = await fetch("/api/planning-items", {
@@ -167,22 +184,34 @@ export function TaskList() {
     <div className="grid gap-4">
       <CreateTaskForm onCreate={handleCreate} />
 
+      {!loading && items.length > 0 ? (
+        <TaskFilters
+          categories={categories}
+          lists={lists}
+          listFilter={listFilter}
+          onListFilterChange={setListFilter}
+          hideCompleted={hideCompleted}
+          onHideCompletedChange={setHideCompleted}
+        />
+      ) : null}
+
       {loading ? (
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : items.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           No tasks yet. Add your first one above.
         </p>
+      ) : visibleItems.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No tasks match the current filters.
+        </p>
       ) : (
         <ul className="grid gap-2">
-          {items.map((item) => (
+          {visibleItems.map((item) => (
             <TaskItem
               key={item.id}
               item={item}
-              completed={
-                completedStatus !== undefined &&
-                item.statusId === completedStatus.id
-              }
+              completed={isCompleted(item)}
               statusName={statusById.get(item.statusId)?.name}
               priorityName={
                 item.priorityId
