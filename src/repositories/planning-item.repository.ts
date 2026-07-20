@@ -17,6 +17,12 @@ export interface CreatePlanningItemData {
   priorityId: string | null;
   statusId: string;
   dueAt: Date | null;
+  // Scheduling is optional at the data layer: omit to fall back to the column
+  // defaults (start/end NULL, all_day false). The service passes explicit
+  // values; direct callers/tests may omit them.
+  startAt?: Date | null;
+  endAt?: Date | null;
+  allDay?: boolean;
 }
 
 /**
@@ -33,6 +39,9 @@ export interface UpdatePlanningItemData {
   priorityId?: string | null;
   statusId?: string;
   dueAt?: Date | null;
+  startAt?: Date | null;
+  endAt?: Date | null;
+  allDay?: boolean;
   archived?: boolean;
 }
 
@@ -67,6 +76,41 @@ export async function listPlanningItemsByUser(
   return prisma.planningItem.findMany({
     where: { userId, deletedAt: null },
     orderBy: { createdAt: "desc" },
+  });
+}
+
+/**
+ * Scheduled items in a category whose schedule overlaps the `[from, to)`
+ * window, for the calendar. Only items with a `startAt` are returned
+ * (unscheduled tasks and `dueAt`-only deadlines are excluded). Overlap is
+ * `startAt < to AND coalesce(endAt, startAt) >= from`: a point item (no
+ * `endAt`) is in-window when its start falls in the range; a ranged item
+ * counts when it ends at/after `from` and starts before `to` — so multi-day
+ * events crossing the window boundary are included. Ownership is enforced
+ * indirectly through the parent list's category (`category: { userId }`),
+ * matching the list vertical's owned-lookup pattern.
+ */
+export async function listScheduledItemsByCategory(
+  userId: string,
+  categoryId: string,
+  from: Date,
+  to: Date,
+): Promise<PlanningItem[]> {
+  return prisma.planningItem.findMany({
+    where: {
+      deletedAt: null,
+      startAt: { not: null, lt: to },
+      OR: [
+        { endAt: null, startAt: { gte: from } },
+        { endAt: { gte: from } },
+      ],
+      list: {
+        categoryId,
+        deletedAt: null,
+        category: { userId, deletedAt: null },
+      },
+    },
+    orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
   });
 }
 
