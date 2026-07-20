@@ -7,6 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { useWorkspaceStore } from "@/stores/workspace-store";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { CategoryFormDialog } from "@/components/categories/category-form-dialog";
 import { ListFormDialog } from "@/components/lists/list-form-dialog";
@@ -74,9 +75,22 @@ interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
  * (Requirement 3.7). Data is fetched client-side.
  */
 export function AppSidebar({ user, ...props }: AppSidebarProps) {
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [lists, setLists] = useState<List[]>([]);
-  const [loading, setLoading] = useState(true);
+  // Categories/lists come from the shared workspace store so the sidebar and
+  // the dashboard stay in sync without a page reload. This component performs
+  // the API mutations and reports errors; the store holds the state.
+  const categories = useWorkspaceStore((state) => state.categories);
+  const lists = useWorkspaceStore((state) => state.lists);
+  const status = useWorkspaceStore((state) => state.status);
+  const ensureLoaded = useWorkspaceStore((state) => state.ensureLoaded);
+  const reload = useWorkspaceStore((state) => state.reload);
+  const addCategory = useWorkspaceStore((state) => state.addCategory);
+  const updateCategory = useWorkspaceStore((state) => state.updateCategory);
+  const removeCategory = useWorkspaceStore((state) => state.removeCategory);
+  const addList = useWorkspaceStore((state) => state.addList);
+  const updateList = useWorkspaceStore((state) => state.updateList);
+  const removeList = useWorkspaceStore((state) => state.removeList);
+
+  const loading = status === "idle" || status === "loading";
 
   const pathname = usePathname();
   const router = useRouter();
@@ -87,37 +101,8 @@ export function AppSidebar({ user, ...props }: AppSidebarProps) {
     : null;
 
   useEffect(() => {
-    let active = true;
-
-    async function load() {
-      try {
-        const [categoriesRes, listsRes] = await Promise.all([
-          fetch("/api/categories"),
-          fetch("/api/lists"),
-        ]);
-        if (!categoriesRes.ok || !listsRes.ok) throw new Error("request failed");
-
-        const [categoriesData, listsData] = (await Promise.all([
-          categoriesRes.json(),
-          listsRes.json(),
-        ])) as [Category[], List[]];
-
-        if (active) {
-          setCategories(categoriesData);
-          setLists(listsData);
-        }
-      } catch {
-        if (active) toast.error("Failed to load your sidebar");
-      } finally {
-        if (active) setLoading(false);
-      }
-    }
-
-    void load();
-    return () => {
-      active = false;
-    };
-  }, []);
+    void ensureLoaded();
+  }, [ensureLoaded]);
 
   // Group lists under their category once per lists change.
   const listsByCategory = useMemo(() => {
@@ -141,7 +126,7 @@ export function AppSidebar({ user, ...props }: AppSidebarProps) {
       return false;
     }
     const created = (await res.json()) as Category;
-    setCategories((prev) => [...prev, created]);
+    addCategory(created);
     return true;
   }
 
@@ -159,23 +144,18 @@ export function AppSidebar({ user, ...props }: AppSidebarProps) {
       return false;
     }
     const updated = (await res.json()) as Category;
-    setCategories((prev) =>
-      prev.map((current) => (current.id === id ? updated : current)),
-    );
+    updateCategory(updated);
     return true;
   }
 
   async function handleDeleteCategory(category: Category): Promise<void> {
-    const categoriesSnapshot = categories;
-    const listsSnapshot = lists;
     const removedListIds = new Set(
       lists.filter((l) => l.categoryId === category.id).map((l) => l.id),
     );
 
-    setCategories((prev) => prev.filter((c) => c.id !== category.id));
-    setLists((prev) => prev.filter((l) => l.categoryId !== category.id));
-
-    // Deleting the category cascades its lists: route away if we're viewing one.
+    // Optimistic: drop the category (and its lists) from the store; route away
+    // if we were viewing one of them. On failure, refetch the truth.
+    removeCategory(category.id);
     if (activeListId && removedListIds.has(activeListId)) {
       router.push("/");
     }
@@ -185,8 +165,7 @@ export function AppSidebar({ user, ...props }: AppSidebarProps) {
     });
     if (!res.ok) {
       toast.error("Failed to delete category");
-      setCategories(categoriesSnapshot);
-      setLists(listsSnapshot);
+      await reload();
     }
   }
 
@@ -204,7 +183,7 @@ export function AppSidebar({ user, ...props }: AppSidebarProps) {
       return false;
     }
     const created = (await res.json()) as List;
-    setLists((prev) => [...prev, created]);
+    addList(created);
     return true;
   }
 
@@ -219,15 +198,13 @@ export function AppSidebar({ user, ...props }: AppSidebarProps) {
       return false;
     }
     const updated = (await res.json()) as List;
-    setLists((prev) =>
-      prev.map((current) => (current.id === id ? updated : current)),
-    );
+    updateList(updated);
     return true;
   }
 
   async function handleDeleteList(list: List): Promise<void> {
-    const snapshot = lists;
-    setLists((prev) => prev.filter((current) => current.id !== list.id));
+    // Optimistic remove from the store; refetch the truth on failure.
+    removeList(list.id);
 
     // If the deleted list is the one being viewed, leave its now-dead route.
     if (activeListId === list.id) {
@@ -237,7 +214,7 @@ export function AppSidebar({ user, ...props }: AppSidebarProps) {
     const res = await fetch(`/api/lists/${list.id}`, { method: "DELETE" });
     if (!res.ok) {
       toast.error("Failed to delete list");
-      setLists(snapshot);
+      await reload();
     }
   }
 

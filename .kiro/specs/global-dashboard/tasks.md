@@ -66,21 +66,21 @@ flowchart TD
 
 ### Phase 3 — UI
 
-- [ ] 5. Build the dashboard component and cards
+- [x] 5. Build the dashboard component and cards
   - Add `src/components/dashboard/dashboard.tsx` (client): `ensureLoaded()` + read store categories/lists; fetch `/api/planning-items` and `/api/statuses` (task snapshot, `sonner` on failure); `useMemo(computeDashboard(...))`; render loading skeletons, the onboarding empty state (no categories), the summary strip, and a card per category. Add presentational `src/components/dashboard/summary-strip.tsx` and `category-card.tsx` (open/completed/overdue/upcoming, open-by-status breakdown, links to `/lists/[listId]`, neutral empty card).
   - _Requirements: 1.1, 1.2, 1.3, 2.1, 2.2, 2.3, 2.4, 2.5, 3.1, 3.2, 3.3, 3.4, 3.5, 5.1, 5.2_
 
-- [ ] 7. Refactor the sidebar onto the workspace store
+- [x] 7. Refactor the sidebar onto the workspace store
   - In `src/components/layout/app-sidebar.tsx`, replace the local `useState` + fetch of categories/lists with the store (`ensureLoaded()` on mount; read from the store). Keep the create/rename/delete handlers' API calls + toasts, but update the store via its mutators instead of local `setState`. Preserve active-list highlighting and the controlled collapsible.
   - _Requirements: 6.1, 6.2_
 
-- [ ] 8. Render the dashboard at the home route
+- [x] 8. Render the dashboard at the home route
   - Update `src/app/(app)/page.tsx` to render `<Dashboard />` in place of the empty state.
   - _Requirements: 1.1_
 
 ### Phase 4 — Verification
 
-- [ ] 9. Full verification pass
+- [x] 9. Full verification pass
   - `pnpm build`, `pnpm test`, `pnpm lint`, `pnpm exec tsc --noEmit` all green (clear `.next` if a stale-cache route type error appears). Manual smoke test: dashboard shows correct numbers; creating/deleting a list in the sidebar updates the cards without a reload; onboarding state with no categories; a deleted list's tasks drop out of the counts.
   - _Requirements: 1.1, 2.1, 3.1, 4.3, 5.1, 6.1, 6.2_
 
