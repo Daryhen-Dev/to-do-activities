@@ -4,10 +4,11 @@
  * The service layer throws these to signal outcomes that are meaningful to
  * callers without depending on any transport (HTTP, CLI, etc.). The route
  * handler maps them to HTTP status codes:
- *   - ValidationError -> 400
- *   - NotFoundError    -> 404 (also used for "referenced id does not exist")
- *   - ConflictError    -> 409 (duplicate active name / unique-index violation)
- *   - anything else    -> 500
+ *   - ValidationError   -> 400
+ *   - UnauthorizedError -> 401 (no authenticated user)
+ *   - NotFoundError      -> 404 (also used for "referenced id does not exist")
+ *   - ConflictError      -> 409 (duplicate active name / unique-index violation)
+ *   - anything else      -> 500
  *
  * Keeping these framework-agnostic means the service never imports
  * `NextResponse`/`NextRequest`, and the route handler never leaks Prisma
@@ -17,6 +18,13 @@ export class ValidationError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "ValidationError";
+  }
+}
+
+export class UnauthorizedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "UnauthorizedError";
   }
 }
 

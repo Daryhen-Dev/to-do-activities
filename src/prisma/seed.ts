@@ -1,7 +1,8 @@
 import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@prisma/client";
-import { DEV_USER_ID } from "../lib/current-user";
+import bcrypt from "bcryptjs";
+import { DEV_USER_ID } from "../lib/dev-user";
 
 // Same driver-adapter requirement as src/lib/prisma.ts — see comment there.
 const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
@@ -9,6 +10,9 @@ const prisma = new PrismaClient({ adapter });
 
 const DEV_USER_EMAIL = "dev@local.test";
 const DEV_USER_NAME = "Dev User";
+// Dev-only credential so you can sign in locally as the seeded user. Never
+// used outside development — production users set their own password.
+const DEV_USER_PASSWORD = "devpassword123";
 
 const ITEM_TYPES = [
   {
@@ -138,10 +142,16 @@ const CATEGORIES = [
 ] as const;
 
 async function main() {
+  const passwordHash = await bcrypt.hash(DEV_USER_PASSWORD, 10);
   const devUser = await prisma.user.upsert({
     where: { id: DEV_USER_ID },
-    update: { email: DEV_USER_EMAIL, name: DEV_USER_NAME },
-    create: { id: DEV_USER_ID, email: DEV_USER_EMAIL, name: DEV_USER_NAME },
+    update: { email: DEV_USER_EMAIL, name: DEV_USER_NAME, passwordHash },
+    create: {
+      id: DEV_USER_ID,
+      email: DEV_USER_EMAIL,
+      name: DEV_USER_NAME,
+      passwordHash,
+    },
   });
 
   for (const itemType of ITEM_TYPES) {

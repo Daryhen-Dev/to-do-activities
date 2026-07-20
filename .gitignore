@@ -43,3 +43,6 @@ next-env.d.ts
 
 # local skill registry cache
 .atl/
+
+# editor (shadcn CLI drops an empty settings.json here)
+.vscode/
