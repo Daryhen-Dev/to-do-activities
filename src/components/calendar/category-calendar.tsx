@@ -14,13 +14,7 @@ import {
   toCalendarEvents,
 } from "@/lib/calendar";
 import { useCalendarStore } from "@/stores/calendar-store";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
+import { DetailSheet } from "@/components/ui/detail-sheet";
 import { AgendaList } from "./agenda-list";
 import { CalendarToolbar } from "./calendar-toolbar";
 import { MonthGrid } from "./month-grid";
@@ -140,32 +134,20 @@ export function CategoryCalendar({
         <AgendaList groups={groups} />
       )}
 
-      <Sheet
+      <DetailSheet
         open={peekEvent !== null}
         onOpenChange={(open) => {
           if (!open) setPeekEvent(null);
         }}
+        title={peekEvent?.title ?? ""}
+        description={peekEvent ? formatWhen(peekEvent) : undefined}
       >
-        <SheetContent side="right">
-          {peekEvent ? (
-            <>
-              <SheetHeader>
-                <SheetTitle>{peekEvent.title}</SheetTitle>
-                <SheetDescription>{formatWhen(peekEvent)}</SheetDescription>
-              </SheetHeader>
-              {peekEvent.description ? (
-                <p className="px-4 text-sm whitespace-pre-wrap">
-                  {peekEvent.description}
-                </p>
-              ) : (
-                <p className="px-4 text-sm text-muted-foreground">
-                  No description.
-                </p>
-              )}
-            </>
-          ) : null}
-        </SheetContent>
-      </Sheet>
+        {peekEvent?.description ? (
+          <p className="text-sm whitespace-pre-wrap">{peekEvent.description}</p>
+        ) : (
+          <p className="text-sm text-muted-foreground">No description.</p>
+        )}
+      </DetailSheet>
     </div>
   );
 }
