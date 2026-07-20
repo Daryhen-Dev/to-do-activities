@@ -272,13 +272,13 @@ export function AppSidebar({ user, ...props }: AppSidebarProps) {
             {loading ? (
               <>
                 <SidebarMenuItem>
-                  <SidebarMenuSkeleton />
+                  <SidebarMenuSkeleton width="75%" />
                 </SidebarMenuItem>
                 <SidebarMenuItem>
-                  <SidebarMenuSkeleton />
+                  <SidebarMenuSkeleton width="60%" />
                 </SidebarMenuItem>
                 <SidebarMenuItem>
-                  <SidebarMenuSkeleton />
+                  <SidebarMenuSkeleton width="80%" />
                 </SidebarMenuItem>
               </>
             ) : categories.length === 0 ? (
