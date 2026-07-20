@@ -9,16 +9,19 @@ import { ConflictError, NotFoundError } from "../../../lib/errors";
 vi.mock("../../../services/list.service", () => ({
   createListForCurrentUser: vi.fn(),
   listListsForCategory: vi.fn(),
+  listAllListsForCurrentUser: vi.fn(),
 }));
 
 import {
   createListForCurrentUser,
+  listAllListsForCurrentUser,
   listListsForCategory,
 } from "../../../services/list.service";
 import { GET, POST } from "./route";
 
 const mockCreate = vi.mocked(createListForCurrentUser);
 const mockList = vi.mocked(listListsForCategory);
+const mockListAll = vi.mocked(listAllListsForCurrentUser);
 
 function postRequest(body: unknown): Request {
   return new Request("http://localhost/api/lists", {
@@ -114,10 +117,16 @@ describe("GET /api/lists", () => {
     expect(mockList).toHaveBeenCalledWith("cat-1");
   });
 
-  it("returns 400 when the categoryId query param is missing", async () => {
+  it("returns 200 with all the user's lists when no categoryId is given", async () => {
+    const lists = [{ id: "list-1" }, { id: "list-2" }, { id: "list-3" }];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    mockListAll.mockResolvedValue(lists as any);
+
     const response = await GET(new Request("http://localhost/api/lists"));
 
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual(lists);
+    expect(mockListAll).toHaveBeenCalledOnce();
     expect(mockList).not.toHaveBeenCalled();
   });
 

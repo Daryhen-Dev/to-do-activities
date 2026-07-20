@@ -8,6 +8,7 @@ import {
 } from "../../../lib/errors";
 import {
   createListForCurrentUser,
+  listAllListsForCurrentUser,
   listListsForCategory,
 } from "../../../services/list.service";
 import { createListSchema } from "../../../validators/list.schema";
@@ -73,17 +74,16 @@ export async function POST(request: Request): Promise<NextResponse> {
 }
 
 /**
- * Lists are always scoped to a category, so `categoryId` is a required
- * query parameter (`GET /api/lists?categoryId=…`). A missing param is a
- * client error surfaced as a domain `ValidationError` -> 400.
+ * Lists for the current user. With `?categoryId=…` the result is scoped to
+ * that (owned) category; without it, every list the user owns across all
+ * categories is returned — useful for category-grouped pickers.
  */
 export async function GET(request: Request): Promise<NextResponse> {
   try {
     const categoryId = new URL(request.url).searchParams.get("categoryId");
-    if (!categoryId) {
-      throw new ValidationError("categoryId query parameter is required");
-    }
-    const lists = await listListsForCategory(categoryId);
+    const lists = categoryId
+      ? await listListsForCategory(categoryId)
+      : await listAllListsForCurrentUser();
     return NextResponse.json(lists, { status: 200 });
   } catch (error) {
     return mapErrorToResponse(error);

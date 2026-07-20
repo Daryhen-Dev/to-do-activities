@@ -6,6 +6,7 @@ import {
   createList,
   findOwnedList,
   listActiveListsByCategory,
+  listActiveListsByUser,
   softDeleteList,
   updateList,
 } from "../repositories/list.repository";
@@ -71,6 +72,12 @@ export async function listListsForCategory(
   await assertCategoryOwned(userId, categoryId);
 
   return listActiveListsByCategory(categoryId);
+}
+
+/** Every non-deleted list the current user owns, across all categories. */
+export async function listAllListsForCurrentUser(): Promise<List[]> {
+  const userId = await getCurrentUserId();
+  return listActiveListsByUser(userId);
 }
 
 /** A single owned list, or `NotFoundError` if not found/not owned. */

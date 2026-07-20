@@ -1,6 +1,6 @@
 "use client";
 
-import type { PlanningItem, Priority } from "@prisma/client";
+import type { Category, List, PlanningItem, Priority } from "@prisma/client";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useState, type ReactElement } from "react";
 import { useForm } from "react-hook-form";
@@ -28,14 +28,17 @@ import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
-/** Sentinel select value for "no priority" (maps to `null` on submit). */
+/** Sentinel select values for "none" (map to `null` on submit). */
 const NO_PRIORITY = "none";
+const NO_LIST = "none";
 
 const editTaskSchema = z.object({
   title: z
@@ -48,6 +51,7 @@ const editTaskSchema = z.object({
     .trim()
     .max(2000, "Description must be at most 2000 characters"),
   priorityId: z.string(),
+  listId: z.string(),
   dueAt: z.string(),
 });
 
@@ -57,12 +61,15 @@ export interface TaskEditPayload {
   title: string;
   description: string | null;
   priorityId: string | null;
+  listId: string | null;
   dueAt: string | null;
 }
 
 interface TaskEditDialogProps {
   item: PlanningItem;
   priorities: Priority[];
+  categories: Category[];
+  lists: List[];
   trigger: ReactElement;
   /** Persists the patch. Resolves `true` on success so the dialog closes. */
   onSubmit: (payload: TaskEditPayload) => Promise<boolean>;
@@ -78,32 +85,33 @@ function toDateInputValue(value: Date | null): string {
 export function TaskEditDialog({
   item,
   priorities,
+  categories,
+  lists,
   trigger,
   onSubmit,
 }: TaskEditDialogProps) {
   const [open, setOpen] = useState(false);
 
+  const defaults = (): EditTaskValues => ({
+    title: item.title,
+    description: item.description ?? "",
+    priorityId: item.priorityId ?? NO_PRIORITY,
+    listId: item.listId ?? NO_LIST,
+    dueAt: toDateInputValue(item.dueAt),
+  });
+
   const form = useForm<EditTaskValues>({
     resolver: zodResolver(editTaskSchema),
-    defaultValues: {
-      title: item.title,
-      description: item.description ?? "",
-      priorityId: item.priorityId ?? NO_PRIORITY,
-      dueAt: toDateInputValue(item.dueAt),
-    },
+    defaultValues: defaults(),
   });
 
   // Re-sync with the latest item each time the dialog opens.
   useEffect(() => {
     if (open) {
-      form.reset({
-        title: item.title,
-        description: item.description ?? "",
-        priorityId: item.priorityId ?? NO_PRIORITY,
-        dueAt: toDateInputValue(item.dueAt),
-      });
+      form.reset(defaults());
     }
-  }, [open, item, form]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, item]);
 
   async function handleSubmit(values: EditTaskValues) {
     const succeeded = await onSubmit({
@@ -111,6 +119,7 @@ export function TaskEditDialog({
       description: values.description.trim() ? values.description.trim() : null,
       priorityId:
         values.priorityId === NO_PRIORITY ? null : values.priorityId,
+      listId: values.listId === NO_LIST ? null : values.listId,
       dueAt: values.dueAt ? values.dueAt : null,
     });
     if (succeeded) {
@@ -157,6 +166,42 @@ export function TaskEditDialog({
                       {...field}
                     />
                   </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="listId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>List</FormLabel>
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value={NO_LIST}>No list</SelectItem>
+                      {categories.map((category) => {
+                        const categoryLists = lists.filter(
+                          (list) => list.categoryId === category.id,
+                        );
+                        if (categoryLists.length === 0) return null;
+                        return (
+                          <SelectGroup key={category.id}>
+                            <SelectLabel>{category.name}</SelectLabel>
+                            {categoryLists.map((list) => (
+                              <SelectItem key={list.id} value={list.id}>
+                                {list.name}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
                   <FormMessage />
                 </FormItem>
               )}

@@ -13,6 +13,7 @@ vi.mock("../repositories/list.repository", () => ({
   createList: vi.fn(),
   findOwnedList: vi.fn(),
   listActiveListsByCategory: vi.fn(),
+  listActiveListsByUser: vi.fn(),
   softDeleteList: vi.fn(),
   updateList: vi.fn(),
 }));
@@ -26,6 +27,7 @@ import {
   createList,
   findOwnedList,
   listActiveListsByCategory,
+  listActiveListsByUser,
   softDeleteList,
   updateList,
 } from "../repositories/list.repository";
@@ -33,6 +35,7 @@ import {
   createListForCurrentUser,
   deleteListForCurrentUser,
   getListForCurrentUser,
+  listAllListsForCurrentUser,
   listListsForCategory,
   updateListForCurrentUser,
 } from "./list.service";
@@ -41,6 +44,7 @@ const mockFindOwnedCategory = vi.mocked(findOwnedCategory);
 const mockCreate = vi.mocked(createList);
 const mockFindOwnedList = vi.mocked(findOwnedList);
 const mockListByCategory = vi.mocked(listActiveListsByCategory);
+const mockListByUser = vi.mocked(listActiveListsByUser);
 const mockSoftDelete = vi.mocked(softDeleteList);
 const mockUpdate = vi.mocked(updateList);
 
@@ -103,6 +107,22 @@ describe("listListsForCategory", () => {
 
     await expect(listListsForCategory("cat-x")).rejects.toThrow(NotFoundError);
     expect(mockListByCategory).not.toHaveBeenCalled();
+  });
+});
+
+describe("listAllListsForCurrentUser", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("returns every list the current user owns", async () => {
+    const lists = [{ id: "list-1" }, { id: "list-2" }] as List[];
+    mockListByUser.mockResolvedValue(lists);
+
+    const result = await listAllListsForCurrentUser();
+
+    expect(mockListByUser).toHaveBeenCalledWith(DEV_USER_ID);
+    expect(result).toBe(lists);
   });
 });
 

@@ -1,7 +1,7 @@
 "use client";
 
-import type { PlanningItem, Priority } from "@prisma/client";
-import { CalendarDays, Flag, Pencil, Trash2 } from "lucide-react";
+import type { Category, List, PlanningItem, Priority } from "@prisma/client";
+import { CalendarDays, Flag, ListTree, Pencil, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -16,7 +16,10 @@ interface TaskItemProps {
   completed: boolean;
   statusName: string | undefined;
   priorityName: string | undefined;
+  listName: string | undefined;
   priorities: Priority[];
+  categories: Category[];
+  lists: List[];
   onToggleComplete: (item: PlanningItem, completed: boolean) => void;
   onUpdate: (id: string, payload: TaskEditPayload) => Promise<boolean>;
   onDelete: (item: PlanningItem) => void;
@@ -39,7 +42,10 @@ export function TaskItem({
   completed,
   statusName,
   priorityName,
+  listName,
   priorities,
+  categories,
+  lists,
   onToggleComplete,
   onUpdate,
   onDelete,
@@ -69,6 +75,12 @@ export function TaskItem({
         ) : null}
         <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
           {statusName ? <span>{statusName}</span> : null}
+          {listName ? (
+            <span className="inline-flex items-center gap-1">
+              <ListTree className="size-3" />
+              {listName}
+            </span>
+          ) : null}
           {priorityName ? (
             <span className="inline-flex items-center gap-1">
               <Flag className="size-3" />
@@ -87,6 +99,8 @@ export function TaskItem({
       <TaskEditDialog
         item={item}
         priorities={priorities}
+        categories={categories}
+        lists={lists}
         onSubmit={(payload) => onUpdate(item.id, payload)}
         trigger={
           <Button variant="ghost" size="icon-sm" aria-label="Edit task">

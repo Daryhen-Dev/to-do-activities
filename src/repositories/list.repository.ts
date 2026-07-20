@@ -65,6 +65,25 @@ export async function listActiveListsByCategory(
 }
 
 /**
+ * Every non-deleted list the user owns, across all of their live categories
+ * (joined through `category: { userId, deletedAt: null }`). Grouped by
+ * category then display order so callers can render category-grouped pickers.
+ */
+export async function listActiveListsByUser(userId: string): Promise<List[]> {
+  return prisma.list.findMany({
+    where: {
+      deletedAt: null,
+      category: { userId, deletedAt: null },
+    },
+    orderBy: [
+      { categoryId: "asc" },
+      { sortOrder: "asc" },
+      { createdAt: "asc" },
+    ],
+  });
+}
+
+/**
  * A single live list whose live parent category is owned by `userId`, or
  * `null` if it does not exist, is soft-deleted, sits under a soft-deleted
  * category, or belongs to someone else. Callers (service layer) throw

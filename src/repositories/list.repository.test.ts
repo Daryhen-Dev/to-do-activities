@@ -6,6 +6,7 @@ import {
   createList,
   findOwnedList,
   listActiveListsByCategory,
+  listActiveListsByUser,
   softDeleteList,
   updateList,
 } from "./list.repository";
@@ -107,5 +108,28 @@ describe("list repository (integration)", () => {
     const updated = await updateList(list.id, { name: renamed });
 
     expect(updated.name).toBe(renamed);
+  });
+
+  it("lists all of a user's lists across categories, excluding soft-deleted", async () => {
+    const live = await createList({
+      categoryId,
+      name: `All-lists live ${Date.now()}`,
+      sortOrder: undefined,
+    });
+    createdListIds.push(live.id);
+
+    const gone = await createList({
+      categoryId,
+      name: `All-lists deleted ${Date.now()}`,
+      sortOrder: undefined,
+    });
+    createdListIds.push(gone.id);
+    await softDeleteList(gone.id);
+
+    const lists = await listActiveListsByUser(DEV_USER_ID);
+    const ids = lists.map((item) => item.id);
+
+    expect(ids).toContain(live.id);
+    expect(ids).not.toContain(gone.id);
   });
 });

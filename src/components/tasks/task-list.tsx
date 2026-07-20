@@ -1,6 +1,12 @@
 "use client";
 
-import type { PlanningItem, Priority, Status } from "@prisma/client";
+import type {
+  Category,
+  List,
+  PlanningItem,
+  Priority,
+  Status,
+} from "@prisma/client";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
@@ -23,6 +29,8 @@ export function TaskList() {
   const [items, setItems] = useState<PlanningItem[]>([]);
   const [statuses, setStatuses] = useState<Status[]>([]);
   const [priorities, setPriorities] = useState<Priority[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [lists, setLists] = useState<List[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -30,23 +38,30 @@ export function TaskList() {
 
     async function load() {
       try {
-        const [itemsRes, statusesRes, prioritiesRes] = await Promise.all([
+        const responses = await Promise.all([
           fetch("/api/planning-items"),
           fetch("/api/statuses"),
           fetch("/api/priorities"),
+          fetch("/api/categories"),
+          fetch("/api/lists"),
         ]);
-        if (!itemsRes.ok || !statusesRes.ok || !prioritiesRes.ok) {
+        if (responses.some((res) => !res.ok)) {
           throw new Error("request failed");
         }
-        const [itemsData, statusesData, prioritiesData] = (await Promise.all([
-          itemsRes.json(),
-          statusesRes.json(),
-          prioritiesRes.json(),
-        ])) as [PlanningItem[], Status[], Priority[]];
+        const [itemsData, statusesData, prioritiesData, categoriesData, listsData] =
+          (await Promise.all(responses.map((res) => res.json()))) as [
+            PlanningItem[],
+            Status[],
+            Priority[],
+            Category[],
+            List[],
+          ];
         if (!active) return;
         setItems(itemsData);
         setStatuses(statusesData);
         setPriorities(prioritiesData);
+        setCategories(categoriesData);
+        setLists(listsData);
       } catch {
         if (active) toast.error("Failed to load your tasks");
       } finally {
@@ -66,6 +81,7 @@ export function TaskList() {
   const priorityById = new Map(
     priorities.map((priority) => [priority.id, priority]),
   );
+  const listById = new Map(lists.map((list) => [list.id, list]));
 
   async function handleCreate(title: string) {
     const res = await fetch("/api/planning-items", {
@@ -173,7 +189,12 @@ export function TaskList() {
                   ? priorityById.get(item.priorityId)?.name
                   : undefined
               }
+              listName={
+                item.listId ? listById.get(item.listId)?.name : undefined
+              }
               priorities={priorities}
+              categories={categories}
+              lists={lists}
               onToggleComplete={handleToggleComplete}
               onUpdate={handleUpdate}
               onDelete={handleDelete}
