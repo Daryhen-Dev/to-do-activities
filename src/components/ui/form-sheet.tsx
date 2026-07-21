@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 
 import {
   Sheet,
@@ -9,6 +9,7 @@ import {
   SheetFooter,
   SheetHeader,
   SheetTitle,
+  SheetTrigger,
 } from "@/components/ui/sheet";
 
 /**
@@ -25,6 +26,8 @@ import {
 interface FormSheetProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Optional element that opens the sheet (rendered as the Base UI trigger). */
+  trigger?: ReactElement;
   title: ReactNode;
   description?: ReactNode;
   children?: ReactNode;
@@ -35,6 +38,7 @@ interface FormSheetProps {
 export function FormSheet({
   open,
   onOpenChange,
+  trigger,
   title,
   description,
   children,
@@ -42,6 +46,7 @@ export function FormSheet({
 }: FormSheetProps) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
+      {trigger ? <SheetTrigger render={trigger} /> : null}
       <SheetContent
         side="right"
         className="gap-0 data-[side=right]:w-full data-[side=right]:sm:w-1/2 data-[side=right]:sm:max-w-none"

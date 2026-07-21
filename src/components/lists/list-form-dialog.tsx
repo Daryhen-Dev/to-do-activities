@@ -1,20 +1,12 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect, useState, type ReactElement } from "react";
+import { useEffect, useId, useState, type ReactElement } from "react";
 import { useForm } from "react-hook-form";
 import type { z } from "zod";
 
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { FormSheet } from "@/components/ui/form-sheet";
 import {
   Form,
   FormControl,
@@ -33,13 +25,14 @@ type ListFormValues = z.infer<typeof listFormSchema>;
 
 interface ListFormDialogProps {
   mode: "create" | "edit";
-  /** Element that opens the dialog (rendered as the Base UI trigger). */
+  /** Element that opens the sheet (rendered as the Base UI trigger). */
   trigger: ReactElement;
   defaultName?: string;
-  /** Persists the value. Resolves `true` on success so the dialog closes. */
+  /** Persists the value. Resolves `true` on success so the sheet closes. */
   onSubmit: (name: string) => Promise<boolean>;
 }
 
+/** Create/rename a list in the side FormSheet (the app's edit convention). */
 export function ListFormDialog({
   mode,
   trigger,
@@ -47,6 +40,9 @@ export function ListFormDialog({
   onSubmit,
 }: ListFormDialogProps) {
   const [open, setOpen] = useState(false);
+  // Unique id so the pinned footer's submit button can target this form even
+  // though it renders outside the <form> (multiple instances exist at once).
+  const formId = useId();
 
   const form = useForm<ListFormValues>({
     resolver: zodResolver(listFormSchema),
@@ -67,50 +63,56 @@ export function ListFormDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={trigger} />
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>
-            {mode === "create" ? "New list" : "Rename list"}
-          </DialogTitle>
-          <DialogDescription>
-            {mode === "create"
-              ? "Add a list to organise tasks within this category."
-              : "Update the list name."}
-          </DialogDescription>
-        </DialogHeader>
-
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(handleSubmit)} className="grid gap-4">
-            <FormField
-              control={form.control}
-              name="name"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Name</FormLabel>
-                  <FormControl>
-                    <Input placeholder="e.g. Groceries" autoFocus {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={form.formState.isSubmitting}>
-                {mode === "create" ? "Create" : "Save"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </Form>
-      </DialogContent>
-    </Dialog>
+    <FormSheet
+      open={open}
+      onOpenChange={setOpen}
+      trigger={trigger}
+      title={mode === "create" ? "New list" : "Rename list"}
+      description={
+        mode === "create"
+          ? "Add a list to organise tasks within this category."
+          : "Update the list name."
+      }
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setOpen(false)}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            form={formId}
+            disabled={form.formState.isSubmitting}
+          >
+            {mode === "create" ? "Create" : "Save"}
+          </Button>
+        </div>
+      }
+    >
+      <Form {...form}>
+        <form
+          id={formId}
+          onSubmit={form.handleSubmit(handleSubmit)}
+          className="grid gap-4"
+        >
+          <FormField
+            control={form.control}
+            name="name"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>Name</FormLabel>
+                <FormControl>
+                  <Input placeholder="e.g. Groceries" autoFocus {...field} />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </form>
+      </Form>
+    </FormSheet>
   );
 }

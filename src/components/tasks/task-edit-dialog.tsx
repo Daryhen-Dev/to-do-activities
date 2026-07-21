@@ -2,21 +2,13 @@
 
 import type { Category, List, PlanningItem, Priority } from "@prisma/client";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useEffect, useState, type ReactElement } from "react";
+import { useEffect, useId, useState, type ReactElement } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { FormSheet } from "@/components/ui/form-sheet";
 import {
   Form,
   FormControl,
@@ -162,6 +154,9 @@ export function TaskEditDialog({
   onSubmit,
 }: TaskEditDialogProps) {
   const [open, setOpen] = useState(false);
+  // Unique id so the pinned footer's submit button can target this form even
+  // though it renders outside the <form>.
+  const formId = useId();
 
   const defaults = (): EditTaskValues => ({
     title: item.title,
@@ -232,18 +227,37 @@ export function TaskEditDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={trigger} />
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Edit task</DialogTitle>
-          <DialogDescription>
-            Update the details of this task.
-          </DialogDescription>
-        </DialogHeader>
-
-        <Form {...form}>
-          <form onSubmit={form.handleSubmit(handleSubmit)} className="grid gap-4">
+    <FormSheet
+      open={open}
+      onOpenChange={setOpen}
+      trigger={trigger}
+      title="Edit task"
+      description="Update the details of this task."
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setOpen(false)}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            form={formId}
+            disabled={form.formState.isSubmitting}
+          >
+            Save
+          </Button>
+        </div>
+      }
+    >
+      <Form {...form}>
+        <form
+          id={formId}
+          onSubmit={form.handleSubmit(handleSubmit)}
+          className="grid gap-4"
+        >
             <FormField
               control={form.control}
               name="title"
@@ -405,21 +419,8 @@ export function TaskEditDialog({
               </div>
             </div>
 
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={form.formState.isSubmitting}>
-                Save
-              </Button>
-            </DialogFooter>
           </form>
         </Form>
-      </DialogContent>
-    </Dialog>
+      </FormSheet>
   );
 }
