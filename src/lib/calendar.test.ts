@@ -15,6 +15,8 @@ import {
   startOfWeek,
   toCalendarEvents,
   toCombinedCalendarEvents,
+  toReminderCalendarEvents,
+  filterReminderLayer,
   filterVisibleEvents,
   type CalendarEvent,
   type ScheduledItemWithCategory,
@@ -917,5 +919,159 @@ describe("filterVisibleEvents", () => {
     const events = [withCategory(catAEvent, "cat-a"), noCategory];
     const result = filterVisibleEvents(events, new Set<string>(["cat-a"]));
     expect(result.map((e) => e.id)).toEqual(["no-cat"]);
+  });
+});
+
+/**
+ * Builds a ScheduledItemWithCategory-shaped row carrying a `remindAt` for
+ * toReminderCalendarEvents. Casts a partial object (a full PlanningItem has many
+ * unrelated fields not exercised here), mirroring makeCombinedRow.
+ */
+function makeReminderRow(row: {
+  id: string;
+  title: string;
+  remindAt: string | null;
+  categoryId: string;
+  categoryName: string;
+  categoryColor: string | null;
+  reminderSeenAt?: string | null;
+}): ScheduledItemWithCategory {
+  return {
+    id: row.id,
+    title: row.title,
+    startAt: null,
+    endAt: null,
+    allDay: false,
+    remindAt: row.remindAt,
+    reminderSeenAt: row.reminderSeenAt ?? null,
+    categoryId: row.categoryId,
+    categoryName: row.categoryName,
+    categoryColor: row.categoryColor,
+  } as unknown as ScheduledItemWithCategory;
+}
+
+describe("toReminderCalendarEvents", () => {
+  it("maps a reminder to a point event anchored at remindAt (endAt null, kind reminder, not all-day)", () => {
+    const remindIso = new Date(2026, 6, 15, 9, 30).toISOString();
+    const events = toReminderCalendarEvents([
+      makeReminderRow({
+        id: "1",
+        title: "Take pills",
+        remindAt: remindIso,
+        categoryId: "cat-1",
+        categoryName: "Health",
+        categoryColor: "#123456",
+      }),
+    ]);
+
+    expect(events).toHaveLength(1);
+    expect(events[0].kind).toBe("reminder");
+    expect(events[0].endAt).toBeNull();
+    expect(events[0].allDay).toBe(false);
+    expect(events[0].startAt.getTime()).toBe(new Date(remindIso).getTime());
+    expect(events[0].categoryId).toBe("cat-1");
+    expect(events[0].categoryName).toBe("Health");
+    expect(events[0].color).toBe("#123456");
+  });
+
+  it("derives a stable palette color when categoryColor is null", () => {
+    const remindIso = new Date(2026, 6, 15, 9, 30).toISOString();
+    const events = toReminderCalendarEvents([
+      makeReminderRow({
+        id: "1",
+        title: "Call",
+        remindAt: remindIso,
+        categoryId: "cat-77",
+        categoryName: "Personal",
+        categoryColor: null,
+      }),
+    ]);
+
+    expect(events[0].color).toBe(resolveCategoryColor(null, "cat-77"));
+    expect(CATEGORY_COLOR_PALETTE).toContain(events[0].color);
+  });
+
+  it("drops rows with a null remindAt", () => {
+    const remindIso = new Date(2026, 6, 15, 9, 30).toISOString();
+    const events = toReminderCalendarEvents([
+      makeReminderRow({
+        id: "1",
+        title: "Has reminder",
+        remindAt: remindIso,
+        categoryId: "cat-1",
+        categoryName: "Work",
+        categoryColor: null,
+      }),
+      makeReminderRow({
+        id: "2",
+        title: "No reminder",
+        remindAt: null,
+        categoryId: "cat-1",
+        categoryName: "Work",
+        categoryColor: null,
+      }),
+    ]);
+
+    expect(events.map((e) => e.id)).toEqual(["1"]);
+  });
+
+  it("keeps an acknowledged reminder (reminderSeenAt set) — the calendar shows all", () => {
+    const remindIso = new Date(2026, 6, 15, 9, 30).toISOString();
+    const events = toReminderCalendarEvents([
+      makeReminderRow({
+        id: "1",
+        title: "Acknowledged",
+        remindAt: remindIso,
+        reminderSeenAt: new Date(2026, 6, 15, 9, 35).toISOString(),
+        categoryId: "cat-1",
+        categoryName: "Work",
+        categoryColor: null,
+      }),
+    ]);
+
+    expect(events.map((e) => e.id)).toEqual(["1"]);
+  });
+});
+
+describe("filterReminderLayer", () => {
+  const scheduled = makeEvent({ id: "s", startAt: new Date(2026, 6, 15, 9, 0) });
+  const reminder: CalendarEvent = {
+    ...makeEvent({ id: "r", startAt: new Date(2026, 6, 15, 10, 0) }),
+    kind: "reminder",
+  };
+
+  it("returns all events unchanged when not hidden", () => {
+    const events = [scheduled, reminder];
+    expect(filterReminderLayer(events, false)).toEqual(events);
+  });
+
+  it("removes only reminder-kind events when hidden", () => {
+    const result = filterReminderLayer([scheduled, reminder], true);
+    expect(result.map((e) => e.id)).toEqual(["s"]);
+  });
+
+  it("never removes scheduled events", () => {
+    const result = filterReminderLayer([scheduled], true);
+    expect(result).toEqual([scheduled]);
+  });
+});
+
+describe("filterVisibleEvents with reminder events", () => {
+  it("excludes a reminder whose category is hidden (reminders inherit the category filter)", () => {
+    const reminder: CalendarEvent = {
+      ...makeEvent({ id: "r", startAt: new Date(2026, 6, 15, 10, 0) }),
+      kind: "reminder",
+      categoryId: "cat-hidden",
+    };
+    const scheduled: CalendarEvent = {
+      ...makeEvent({ id: "s", startAt: new Date(2026, 6, 15, 9, 0) }),
+      categoryId: "cat-shown",
+    };
+
+    const result = filterVisibleEvents(
+      [scheduled, reminder],
+      new Set<string>(["cat-hidden"]),
+    );
+    expect(result.map((e) => e.id)).toEqual(["s"]);
   });
 });

@@ -8,12 +8,14 @@ import {
   buildMonthGrid,
   buildWeekDays,
   type CalendarEvent,
+  filterReminderLayer,
   filterVisibleEvents,
   groupEventsByDay,
   isSameDay,
   rangeFor,
   type ScheduledItemWithCategory,
   toCombinedCalendarEvents,
+  toReminderCalendarEvents,
 } from "@/lib/calendar";
 import { rescheduleEvent } from "@/lib/calendar-reschedule";
 import { useCalendarStore } from "@/stores/calendar-store";
@@ -70,6 +72,9 @@ export function CombinedCalendar() {
   const hiddenCategoryIds = useCalendarFilterStore(
     (state) => state.hiddenCategoryIds,
   );
+  const remindersHidden = useCalendarFilterStore(
+    (state) => state.remindersHidden,
+  );
 
   const { from, to } = rangeFor(view, anchorDate);
   const fromIso = from.toISOString();
@@ -92,17 +97,25 @@ export function CombinedCalendar() {
     async function load() {
       setLoading(true);
       try {
-        const res = await fetch(
-          `/api/calendar?from=${encodeURIComponent(
-            fromIso,
-          )}&to=${encodeURIComponent(toIso)}`,
-        );
-        if (!res.ok) {
+        const query = `from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}`;
+        // Fetch the scheduled events and the reminder layer in parallel, then
+        // merge them into one event array (reminders carry kind: "reminder").
+        const [scheduledRes, remindersRes] = await Promise.all([
+          fetch(`/api/calendar?${query}`),
+          fetch(`/api/calendar/reminders?${query}`),
+        ]);
+        if (!scheduledRes.ok || !remindersRes.ok) {
           throw new Error("request failed");
         }
-        const rows = (await res.json()) as ScheduledItemWithCategory[];
+        const [scheduledRows, reminderRows] = (await Promise.all([
+          scheduledRes.json(),
+          remindersRes.json(),
+        ])) as [ScheduledItemWithCategory[], ScheduledItemWithCategory[]];
         if (!active) return;
-        setEvents(toCombinedCalendarEvents(rows));
+        setEvents([
+          ...toCombinedCalendarEvents(scheduledRows),
+          ...toReminderCalendarEvents(reminderRows),
+        ]);
       } catch {
         if (active) toast.error("Failed to load the calendar");
       } finally {
@@ -119,10 +132,15 @@ export function CombinedCalendar() {
   const weeks = useMemo(() => buildMonthGrid(anchorDate), [anchorDate]);
   const weekDays = useMemo(() => buildWeekDays(anchorDate), [anchorDate]);
 
-  // Only render events whose category is toggled on.
+  // Render events whose category is toggled on, then drop the reminder layer
+  // when the Reminders toggle is off.
   const visibleEvents = useMemo(
-    () => filterVisibleEvents(events, hiddenCategoryIds),
-    [events, hiddenCategoryIds],
+    () =>
+      filterReminderLayer(
+        filterVisibleEvents(events, hiddenCategoryIds),
+        remindersHidden,
+      ),
+    [events, hiddenCategoryIds, remindersHidden],
   );
 
   const itemTypeById = useMemo(

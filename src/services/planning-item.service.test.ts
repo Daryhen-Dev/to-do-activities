@@ -18,6 +18,7 @@ vi.mock("../repositories/planning-item.repository", () => ({
   findOwnedPlanningItem: vi.fn(),
   listDueReminders: vi.fn(),
   listPlanningItemsByUser: vi.fn(),
+  listRemindersForUser: vi.fn(),
   listScheduledItemsByCategory: vi.fn(),
   listScheduledItemsForUser: vi.fn(),
   markReminderSeen: vi.fn(),
@@ -47,6 +48,7 @@ import {
   findOwnedPlanningItem,
   listDueReminders,
   listPlanningItemsByUser,
+  listRemindersForUser,
   listScheduledItemsByCategory,
   listScheduledItemsForUser,
   markReminderSeen,
@@ -60,6 +62,7 @@ import {
   getPlanningItemForCurrentUser,
   listDueRemindersForCurrentUser,
   listPlanningItemsForCurrentUser,
+  listRemindersForCurrentUserRange,
   listScheduledItemsForCategory,
   listScheduledItemsForCurrentUserRange,
   updatePlanningItemForCurrentUser,
@@ -79,6 +82,7 @@ const mockFindOwnedCategory = vi.mocked(findOwnedCategory);
 const mockFindOverlap = vi.mocked(findOverlappingTimedItem);
 const mockListDueReminders = vi.mocked(listDueReminders);
 const mockMarkReminderSeen = vi.mocked(markReminderSeen);
+const mockListRemindersForUser = vi.mocked(listRemindersForUser);
 
 const ownedList = { id: "list-1" } as List;
 
@@ -433,6 +437,39 @@ describe("listScheduledItemsForCurrentUserRange", () => {
     mockListScheduledForUser.mockResolvedValue([]);
 
     await listScheduledItemsForCurrentUserRange(from, to);
+
+    expect(mockFindOwnedCategory).not.toHaveBeenCalled();
+  });
+});
+
+describe("listRemindersForCurrentUserRange", () => {
+  const from = new Date("2026-11-01T00:00:00.000Z");
+  const to = new Date("2026-11-08T00:00:00.000Z");
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // The reminder layer is user-scoped across categories, so the service just
+  // resolves the current user (stubbed) and delegates with the window.
+  it("delegates to the repository with the resolved current user, from and to", async () => {
+    const items = [
+      { id: "r-1", categoryId: "cat-1" },
+      { id: "r-2", categoryId: "cat-2" },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ] as any as ScheduledItemWithCategory[];
+    mockListRemindersForUser.mockResolvedValue(items);
+
+    const result = await listRemindersForCurrentUserRange(from, to);
+
+    expect(mockListRemindersForUser).toHaveBeenCalledWith(DEV_USER_ID, from, to);
+    expect(result).toBe(items);
+  });
+
+  it("does not consult the category ownership repository", async () => {
+    mockListRemindersForUser.mockResolvedValue([]);
+
+    await listRemindersForCurrentUserRange(from, to);
 
     expect(mockFindOwnedCategory).not.toHaveBeenCalled();
   });

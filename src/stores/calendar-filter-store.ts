@@ -17,6 +17,10 @@ interface CalendarFilterState {
   isHidden: (categoryId: string) => boolean;
   /** Clears all hidden categories (show everything). */
   reset: () => void;
+  /** True when the whole reminder layer is hidden. Default false (shown). */
+  remindersHidden: boolean;
+  /** Flips the reminder-layer visibility. */
+  toggleReminders: () => void;
 }
 
 export const useCalendarFilterStore = create<CalendarFilterState>(
@@ -37,5 +41,10 @@ export const useCalendarFilterStore = create<CalendarFilterState>(
     isHidden: (categoryId) => get().hiddenCategoryIds.has(categoryId),
 
     reset: () => set({ hiddenCategoryIds: new Set<string>() }),
+
+    remindersHidden: false,
+
+    toggleReminders: () =>
+      set((state) => ({ remindersHidden: !state.remindersHidden })),
   }),
 );

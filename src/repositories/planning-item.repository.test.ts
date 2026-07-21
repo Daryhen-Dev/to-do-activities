@@ -9,6 +9,7 @@ import {
   findOwnedPlanningItem,
   listDueReminders,
   listPlanningItemsByUser,
+  listRemindersForUser,
   listScheduledItemsByCategory,
   listScheduledItemsForUser,
   markReminderSeen,
@@ -429,6 +430,129 @@ describe("planning-item repository (integration)", () => {
     const updated = await markReminderSeen(item.id, seenAt);
 
     expect(updated.reminderSeenAt?.toISOString()).toBe(seenAt.toISOString());
+  });
+
+  it("listRemindersForUser returns in-window reminders (incl. acknowledged) with category, ordered by remindAt", async () => {
+    const from = new Date("2026-11-01T00:00:00.000Z");
+    const to = new Date("2026-11-08T00:00:00.000Z");
+    const base = {
+      userId: DEV_USER_ID,
+      description: null,
+      listId,
+      itemTypeId,
+      priorityId: null,
+      statusId,
+      dueAt: null,
+    };
+
+    // INCLUDED: two in-window reminders (assert ascending order).
+    const late = await createPlanningItem({
+      ...base,
+      title: "reminder in-window late",
+      remindAt: new Date("2026-11-05T10:00:00.000Z"),
+    });
+    createdItemIds.push(late.id);
+    const early = await createPlanningItem({
+      ...base,
+      title: "reminder in-window early",
+      remindAt: new Date("2026-11-02T10:00:00.000Z"),
+    });
+    createdItemIds.push(early.id);
+
+    // INCLUDED: acknowledged reminder in window (calendar shows all).
+    const acknowledged = await createPlanningItem({
+      ...base,
+      title: "reminder acknowledged in-window",
+      remindAt: new Date("2026-11-03T10:00:00.000Z"),
+    });
+    createdItemIds.push(acknowledged.id);
+    await markReminderSeen(acknowledged.id, new Date("2026-11-03T10:05:00.000Z"));
+
+    // EXCLUDED: before / after the window.
+    const before = await createPlanningItem({
+      ...base,
+      title: "reminder before window",
+      remindAt: new Date("2026-10-30T10:00:00.000Z"),
+    });
+    createdItemIds.push(before.id);
+    const after = await createPlanningItem({
+      ...base,
+      title: "reminder after window",
+      remindAt: new Date("2026-11-10T10:00:00.000Z"),
+    });
+    createdItemIds.push(after.id);
+
+    // EXCLUDED: no remindAt.
+    const noRemind = await createPlanningItem({
+      ...base,
+      title: "no reminder in-window",
+    });
+    createdItemIds.push(noRemind.id);
+
+    // EXCLUDED: soft-deleted / archived despite an in-window remindAt.
+    const deleted = await createPlanningItem({
+      ...base,
+      title: "deleted reminder in-window",
+      remindAt: new Date("2026-11-04T10:00:00.000Z"),
+    });
+    createdItemIds.push(deleted.id);
+    await softDeletePlanningItem(deleted.id);
+
+    const archived = await createPlanningItem({
+      ...base,
+      title: "archived reminder in-window",
+      remindAt: new Date("2026-11-04T11:00:00.000Z"),
+    });
+    createdItemIds.push(archived.id);
+    await updatePlanningItem(archived.id, { archived: true });
+
+    const reminders = await listRemindersForUser(DEV_USER_ID, from, to);
+    const ids = reminders.map((item) => item.id);
+
+    expect(ids).toContain(early.id);
+    expect(ids).toContain(late.id);
+    expect(ids).toContain(acknowledged.id);
+    expect(ids).not.toContain(before.id);
+    expect(ids).not.toContain(after.id);
+    expect(ids).not.toContain(noRemind.id);
+    expect(ids).not.toContain(deleted.id);
+    expect(ids).not.toContain(archived.id);
+
+    // Ordered by remindAt ascending.
+    expect(ids.indexOf(early.id)).toBeLessThan(ids.indexOf(late.id));
+
+    // Enriched with the owning category.
+    const earlyRow = reminders.find((item) => item.id === early.id);
+    expect(earlyRow?.categoryId).toBeDefined();
+    expect(typeof earlyRow?.categoryName).toBe("string");
+  });
+
+  it("listRemindersForUser excludes another user's in-window reminder", async () => {
+    const stranger = await prisma.user.create({
+      data: { email: `cal-reminder-stranger-${Date.now()}@test.local` },
+    });
+    throwawayUserIds.push(stranger.id);
+
+    const strangersReminder = await prisma.planningItem.create({
+      data: {
+        userId: stranger.id,
+        title: "stranger's in-window reminder",
+        listId,
+        itemTypeId,
+        statusId,
+        remindAt: new Date("2026-11-05T10:00:00.000Z"),
+      },
+    });
+
+    const reminders = await listRemindersForUser(
+      DEV_USER_ID,
+      new Date("2026-11-01T00:00:00.000Z"),
+      new Date("2026-11-08T00:00:00.000Z"),
+    );
+
+    expect(reminders.map((item) => item.id)).not.toContain(
+      strangersReminder.id,
+    );
   });
 });
 

@@ -1,16 +1,20 @@
 "use client";
 
+import { Bell } from "lucide-react";
+
 import { resolveCategoryColor } from "@/lib/category-color";
 import { cn } from "@/lib/utils";
 import { useCalendarFilterStore } from "@/stores/calendar-filter-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 
 /**
- * Combined-calendar legend + filter. Lists the user's categories, each as a
- * color swatch + name + on/off toggle. Reads categories from the shared
- * workspace store and visibility from the calendar filter store; clicking a
- * chip toggles that category's events across all views. A dimmed, struck-out
- * chip means the category is hidden.
+ * Combined-calendar legend + filters. Lists the user's categories (color swatch
+ * + name + on/off toggle) followed by a single "Reminders" toggle for the whole
+ * reminder layer. Reads categories from the shared workspace store and
+ * visibility from the calendar filter store; clicking a chip toggles that
+ * category's events (or the reminder layer) across all views. A dimmed,
+ * struck-out chip means it is hidden. The Reminders toggle always renders, even
+ * when there are no categories.
  */
 export function CategoryLegend() {
   const categories = useWorkspaceStore((state) => state.categories);
@@ -18,8 +22,12 @@ export function CategoryLegend() {
     (state) => state.hiddenCategoryIds,
   );
   const toggle = useCalendarFilterStore((state) => state.toggle);
-
-  if (categories.length === 0) return null;
+  const remindersHidden = useCalendarFilterStore(
+    (state) => state.remindersHidden,
+  );
+  const toggleReminders = useCalendarFilterStore(
+    (state) => state.toggleReminders,
+  );
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -48,6 +56,21 @@ export function CategoryLegend() {
           </button>
         );
       })}
+
+      <button
+        type="button"
+        aria-pressed={!remindersHidden}
+        onClick={toggleReminders}
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+          remindersHidden
+            ? "text-muted-foreground line-through opacity-60"
+            : "text-foreground hover:bg-accent",
+        )}
+      >
+        <Bell aria-hidden className="size-3" />
+        Reminders
+      </button>
     </div>
   );
 }

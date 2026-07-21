@@ -1,9 +1,12 @@
+import { Bell } from "lucide-react";
+
 import type { CalendarEvent } from "@/lib/calendar";
 
 /**
  * Presentational agenda list. Renders each day group with a local heading and
- * its events (time range, single start time, or "All day"). Shows a neutral
- * empty state when there are no upcoming groups. Read-only.
+ * its events (time range, single start time, or "All day"). Reminder rows carry
+ * a bell so they read as point markers rather than scheduled events. Shows a
+ * neutral empty state when there are no upcoming groups. Read-only.
  */
 
 const DAY_HEADING_FORMAT: Intl.DateTimeFormatOptions = {
@@ -62,7 +65,15 @@ export function AgendaList({ groups }: AgendaListProps) {
                 <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                   {timeLabel(event)}
                 </span>
-                <span className="truncate text-sm">{event.title}</span>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  {event.kind === "reminder" ? (
+                    <Bell
+                      aria-label="Reminder"
+                      className="size-3 shrink-0 text-muted-foreground"
+                    />
+                  ) : null}
+                  <span className="truncate text-sm">{event.title}</span>
+                </span>
               </li>
             ))}
           </ul>

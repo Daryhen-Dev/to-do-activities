@@ -28,6 +28,12 @@ export interface CalendarEvent {
   categoryName?: string;
   /** Resolved display color (already run through `resolveCategoryColor`). */
   color?: string;
+  /**
+   * Discriminates a reminder marker (a point at `remindAt`) from a scheduled
+   * event. Absent or "scheduled" is the default; "reminder" marks the layer so
+   * the grids can render it distinctly and keep it read-only (non-draggable).
+   */
+  kind?: "scheduled" | "reminder";
 }
 
 /**
@@ -243,6 +249,52 @@ export function toCombinedCalendarEvents(
     });
   }
   return events;
+}
+
+/**
+ * Maps reminder rows into POINT `CalendarEvent`s anchored at `remindAt`
+ * (`endAt = null`, `allDay = false`, `kind = "reminder"`), each carrying its
+ * `categoryId`, `categoryName`, and a resolved display `color`. Rows with a
+ * null or unparseable `remindAt` are dropped. Powers the calendar's reminder
+ * layer; being a point event, a reminder reuses every layout/bucketing helper
+ * exactly like a point scheduled item.
+ */
+export function toReminderCalendarEvents(
+  rows: ScheduledItemWithCategory[],
+): CalendarEvent[] {
+  const events: CalendarEvent[] = [];
+  for (const row of rows) {
+    if (!row.remindAt) continue;
+    const remindAt = new Date(row.remindAt);
+    if (Number.isNaN(remindAt.getTime())) continue;
+    events.push({
+      id: row.id,
+      title: row.title,
+      startAt: remindAt,
+      endAt: null,
+      allDay: false,
+      kind: "reminder",
+      description: row.description ?? null,
+      itemTypeId: row.itemTypeId,
+      categoryId: row.categoryId,
+      categoryName: row.categoryName,
+      color: resolveCategoryColor(row.categoryColor, row.categoryId),
+    });
+  }
+  return events;
+}
+
+/**
+ * Events with the reminder layer removed when `hidden` is true; unchanged when
+ * false. Only `kind === "reminder"` events are affected — scheduled events are
+ * never removed. Drives the single "Reminders" toggle in the legend.
+ */
+export function filterReminderLayer(
+  events: CalendarEvent[],
+  hidden: boolean,
+): CalendarEvent[] {
+  if (!hidden) return events;
+  return events.filter((event) => event.kind !== "reminder");
 }
 
 /**

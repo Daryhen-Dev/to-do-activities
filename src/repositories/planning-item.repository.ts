@@ -210,6 +210,50 @@ export async function listScheduledItemsForUser(
 }
 
 /**
+ * Reminders of the WHOLE user (across all categories) whose `remindAt` falls in
+ * the `[from, to)` window, each enriched with its owning category's
+ * id/name/color — the data source for the calendar's reminder layer. Unlike the
+ * bell's `listDueReminders`, this does NOT filter by `reminderSeenAt` or
+ * `remindAt <= now`: the calendar positions EVERY reminder in the period,
+ * acknowledged or not. Excludes soft-deleted and archived items. Joins
+ * `List → Category` and flattens to `ScheduledItemWithCategory` so no Prisma
+ * relation shape leaks past this layer. Ordered `remindAt asc`.
+ */
+export async function listRemindersForUser(
+  userId: string,
+  from: Date,
+  to: Date,
+): Promise<ScheduledItemWithCategory[]> {
+  const rows = await prisma.planningItem.findMany({
+    where: {
+      userId,
+      deletedAt: null,
+      archived: false,
+      remindAt: { not: null, gte: from, lt: to },
+      list: {
+        deletedAt: null,
+        category: { userId, deletedAt: null },
+      },
+    },
+    include: {
+      list: {
+        select: {
+          category: { select: { id: true, name: true, color: true } },
+        },
+      },
+    },
+    orderBy: [{ remindAt: "asc" }, { createdAt: "asc" }],
+  });
+
+  return rows.map(({ list, ...item }) => ({
+    ...item,
+    categoryId: list.category.id,
+    categoryName: list.category.name,
+    categoryColor: list.category.color,
+  }));
+}
+
+/**
  * The first of the user's TIMED (non-all-day) scheduled items whose interval
  * overlaps `[start, end)` — it starts before `end` and ends after `start`, so
  * boundaries that merely touch (e.g. 10–11 and 11–12) do NOT count as a

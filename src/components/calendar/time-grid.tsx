@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Bell } from "lucide-react";
 
 import {
   type CalendarEvent,
@@ -129,18 +130,22 @@ function TimedEvent({
   // Combined view: color the block by its category (accent border + tint),
   // keeping readable text. Absent color → default block styling.
   const colored = Boolean(event.color);
+  // A reminder is a read-only point marker: never draggable (its time is edited
+  // in the task dialog), always peeks on click, and shows a bell + dashed accent.
+  const isReminder = event.kind === "reminder";
+  const canDrag = draggable && !isReminder;
 
   return (
     <button
       type="button"
       title={label}
-      // Read-only mode keeps the click → peek behavior. In draggable mode the
-      // click is resolved from pointer-up instead (a non-drag press peeks), so
-      // no onClick is attached to avoid a double peek.
-      onClick={draggable ? undefined : () => onPeek?.(event)}
-      onPointerDown={draggable ? (e) => onPointerDown(event, e) : undefined}
-      onPointerMove={draggable ? (e) => onPointerMove(event, e) : undefined}
-      onPointerUp={draggable ? (e) => onPointerUp(event, e) : undefined}
+      // Read-only mode (and reminders) keep the click → peek behavior. In
+      // draggable mode the click is resolved from pointer-up instead (a non-drag
+      // press peeks), so no onClick is attached to avoid a double peek.
+      onClick={canDrag ? undefined : () => onPeek?.(event)}
+      onPointerDown={canDrag ? (e) => onPointerDown(event, e) : undefined}
+      onPointerMove={canDrag ? (e) => onPointerMove(event, e) : undefined}
+      onPointerUp={canDrag ? (e) => onPointerUp(event, e) : undefined}
       style={{
         top: `${(startMin / MINUTES_PER_DAY) * 100}%`,
         height: `${((endMin - startMin) / MINUTES_PER_DAY) * 100}%`,
@@ -160,11 +165,17 @@ function TimedEvent({
         colored
           ? "border-l-[3px] text-foreground hover:opacity-80"
           : "bg-secondary text-secondary-foreground hover:bg-secondary/80",
-        draggable && "cursor-grab touch-none",
+        isReminder && "border-dashed",
+        canDrag && "cursor-grab touch-none",
         dragging && "cursor-grabbing select-none shadow-lg",
       )}
     >
-      <span className="block truncate font-medium">{label}</span>
+      <span className="flex items-center gap-1 truncate font-medium">
+        {isReminder ? (
+          <Bell aria-hidden className="size-3 shrink-0" />
+        ) : null}
+        <span className="truncate">{label}</span>
+      </span>
     </button>
   );
 }

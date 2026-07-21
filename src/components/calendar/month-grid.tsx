@@ -1,5 +1,7 @@
 "use client";
 
+import { Bell } from "lucide-react";
+
 import { type CalendarEvent, eventsOnDay, isSameDay } from "@/lib/calendar";
 import { cn } from "@/lib/utils";
 
@@ -54,6 +56,9 @@ function EventChip({
   // accent (left border + light tint) so text contrast never depends on the
   // hue. Without a color (per-category view) the default chip styling is used.
   const colored = Boolean(event.color);
+  // A reminder is a point marker: a dashed accent + a bell tell it apart from a
+  // scheduled block at a glance.
+  const isReminder = event.kind === "reminder";
   return (
     <button
       type="button"
@@ -65,13 +70,17 @@ function EventChip({
           : undefined
       }
       className={cn(
-        "w-full truncate rounded px-1.5 py-0.5 text-left text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+        "flex w-full items-center gap-1 truncate rounded px-1.5 py-0.5 text-left text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
         colored
           ? "border-l-[3px] text-foreground hover:opacity-80"
           : "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        isReminder && "border-dashed",
       )}
     >
-      {chipLabel(event)}
+      {isReminder ? (
+        <Bell aria-hidden className="size-3 shrink-0" />
+      ) : null}
+      <span className="truncate">{chipLabel(event)}</span>
     </button>
   );
 }

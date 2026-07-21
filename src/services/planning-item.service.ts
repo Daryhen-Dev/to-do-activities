@@ -9,6 +9,7 @@ import {
   findOwnedPlanningItem,
   listDueReminders,
   listPlanningItemsByUser,
+  listRemindersForUser,
   listScheduledItemsByCategory,
   listScheduledItemsForUser,
   markReminderSeen,
@@ -163,6 +164,21 @@ export async function listScheduledItemsForCurrentUserRange(
 ): Promise<ScheduledItemWithCategory[]> {
   const userId = await getCurrentUserId();
   return listScheduledItemsForUser(userId, from, to);
+}
+
+/**
+ * The current user's reminders whose `remindAt` falls in `[from, to)`, across
+ * all categories — the data source for the calendar's reminder layer. Resolves
+ * the acting user server-side (authoritative ownership); no category precheck is
+ * needed since the query is already user-scoped. Unlike the bell, this includes
+ * acknowledged reminders (the calendar positions every reminder in the window).
+ */
+export async function listRemindersForCurrentUserRange(
+  from: Date,
+  to: Date,
+): Promise<ScheduledItemWithCategory[]> {
+  const userId = await getCurrentUserId();
+  return listRemindersForUser(userId, from, to);
 }
 
 /**
