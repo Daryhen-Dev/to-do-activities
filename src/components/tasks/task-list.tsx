@@ -2,6 +2,7 @@
 
 import type {
   Category,
+  ItemType,
   List,
   PlanningItem,
   Priority,
@@ -10,6 +11,7 @@ import type {
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
+import { useItemTypeStore } from "@/stores/item-type-store";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { CreateTaskForm } from "./create-task-form";
@@ -40,6 +42,13 @@ export function TaskList({ listId }: TaskListProps) {
   const [lists, setLists] = useState<List[]>([]);
   const [loading, setLoading] = useState(true);
   const [hideCompleted, setHideCompleted] = useState(false);
+
+  const ensureItemTypesLoaded = useItemTypeStore((state) => state.ensureLoaded);
+  const itemTypes = useItemTypeStore((state) => state.itemTypes);
+
+  useEffect(() => {
+    void ensureItemTypesLoaded();
+  }, [ensureItemTypesLoaded]);
 
   useEffect(() => {
     let active = true;
@@ -90,6 +99,9 @@ export function TaskList({ listId }: TaskListProps) {
     priorities.map((priority) => [priority.id, priority]),
   );
   const listById = new Map(lists.map((list) => [list.id, list]));
+  const itemTypeById = new Map<string, ItemType>(
+    itemTypes.map((type) => [type.id, type]),
+  );
 
   const isCompleted = (item: PlanningItem): boolean =>
     completedStatus !== undefined && item.statusId === completedStatus.id;
@@ -99,11 +111,11 @@ export function TaskList({ listId }: TaskListProps) {
     (item) => !(hideCompleted && isCompleted(item)),
   );
 
-  async function handleCreate(title: string) {
+  async function handleCreate(title: string, itemTypeId: string) {
     const res = await fetch("/api/planning-items", {
       method: "POST",
       headers: JSON_HEADERS,
-      body: JSON.stringify({ title, listId }),
+      body: JSON.stringify({ title, listId, itemTypeId }),
     });
     if (!res.ok) {
       toast.error("Failed to add task");
@@ -181,7 +193,7 @@ export function TaskList({ listId }: TaskListProps) {
 
   return (
     <div className="grid gap-4">
-      <CreateTaskForm onCreate={handleCreate} />
+      <CreateTaskForm itemTypes={itemTypes} onCreate={handleCreate} />
 
       {!loading && listItems.length > 0 ? (
         <div className="flex items-center justify-end">
@@ -221,7 +233,9 @@ export function TaskList({ listId }: TaskListProps) {
               listName={
                 item.listId ? listById.get(item.listId)?.name : undefined
               }
+              itemType={itemTypeById.get(item.itemTypeId)}
               priorities={priorities}
+              itemTypes={itemTypes}
               categories={categories}
               lists={lists}
               onToggleComplete={handleToggleComplete}

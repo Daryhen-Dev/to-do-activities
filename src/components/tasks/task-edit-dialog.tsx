@@ -1,6 +1,12 @@
 "use client";
 
-import type { Category, List, PlanningItem, Priority } from "@prisma/client";
+import type {
+  Category,
+  ItemType,
+  List,
+  PlanningItem,
+  Priority,
+} from "@prisma/client";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useId, useState, type ReactElement } from "react";
 import { useForm, useWatch } from "react-hook-form";
@@ -45,6 +51,7 @@ const editTaskSchema = z
       .trim()
       .max(2000, "Description must be at most 2000 characters"),
     priorityId: z.string(),
+    itemTypeId: z.string(),
     listId: z.string(),
     dueAt: z.string(),
     allDay: z.boolean(),
@@ -75,6 +82,7 @@ export interface TaskEditPayload {
   title: string;
   description: string | null;
   priorityId: string | null;
+  itemTypeId: string;
   listId: string;
   dueAt: string | null;
   startAt?: string | null;
@@ -85,6 +93,7 @@ export interface TaskEditPayload {
 interface TaskEditDialogProps {
   item: PlanningItem;
   priorities: Priority[];
+  itemTypes: ItemType[];
   categories: Category[];
   lists: List[];
   trigger: ReactElement;
@@ -148,6 +157,7 @@ function toIsoUtc(value: string, allDay: boolean): string | null {
 export function TaskEditDialog({
   item,
   priorities,
+  itemTypes,
   categories,
   lists,
   trigger,
@@ -162,6 +172,7 @@ export function TaskEditDialog({
     title: item.title,
     description: item.description ?? "",
     priorityId: item.priorityId ?? NO_PRIORITY,
+    itemTypeId: item.itemTypeId,
     listId: item.listId,
     dueAt: toDateInputValue(item.dueAt),
     allDay: item.allDay,
@@ -215,6 +226,7 @@ export function TaskEditDialog({
       description: values.description.trim() ? values.description.trim() : null,
       priorityId:
         values.priorityId === NO_PRIORITY ? null : values.priorityId,
+      itemTypeId: values.itemTypeId,
       listId: values.listId,
       dueAt: values.dueAt ? values.dueAt : null,
       startAt,
@@ -340,6 +352,35 @@ export function TaskEditDialog({
                       {priorities.map((priority) => (
                         <SelectItem key={priority.id} value={priority.id}>
                           {priority.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name="itemTypeId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Type</FormLabel>
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger className="w-full">
+                        <SelectValue>
+                          {(value) =>
+                            itemTypes.find((type) => type.id === value)?.name ??
+                            ""
+                          }
+                        </SelectValue>
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      {itemTypes.map((type) => (
+                        <SelectItem key={type.id} value={type.id}>
+                          {type.name}
                         </SelectItem>
                       ))}
                     </SelectContent>

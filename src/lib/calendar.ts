@@ -20,6 +20,8 @@ export interface CalendarEvent {
   allDay: boolean;
   /** Optional details shown in the event peek panel. */
   description?: string | null;
+  /** Item type id — used to show the type badge in the event detail sheet. */
+  itemTypeId?: string;
   /** Owning category id — present only in the combined multi-category view. */
   categoryId?: string;
   /** Owning category name — present only in the combined view. */
@@ -205,6 +207,7 @@ export function toCalendarEvents(rows: PlanningItem[]): CalendarEvent[] {
       endAt: end && !Number.isNaN(end.getTime()) ? end : null,
       allDay: row.allDay,
       description: row.description ?? null,
+      itemTypeId: row.itemTypeId,
     });
   }
   return events;
@@ -233,6 +236,7 @@ export function toCombinedCalendarEvents(
       endAt: end && !Number.isNaN(end.getTime()) ? end : null,
       allDay: row.allDay,
       description: row.description ?? null,
+      itemTypeId: row.itemTypeId,
       categoryId: row.categoryId,
       categoryName: row.categoryName,
       color: resolveCategoryColor(row.categoryColor, row.categoryId),

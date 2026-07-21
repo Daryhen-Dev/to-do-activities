@@ -18,6 +18,8 @@ const ITEM_TYPES = [
   {
     key: "tarea",
     name: "Tarea",
+    color: "#3B82F6",
+    icon: "ListChecks",
     sortOrder: 1,
     isDefault: true,
     requiresCompletion: true,
@@ -28,6 +30,8 @@ const ITEM_TYPES = [
   {
     key: "recordatorio",
     name: "Recordatorio",
+    color: "#F59E0B",
+    icon: "Bell",
     sortOrder: 2,
     isDefault: false,
     requiresCompletion: true,
@@ -38,6 +42,8 @@ const ITEM_TYPES = [
   {
     key: "evento",
     name: "Evento",
+    color: "#A855F7",
+    icon: "CalendarClock",
     sortOrder: 3,
     isDefault: false,
     requiresCompletion: false,
@@ -48,6 +54,8 @@ const ITEM_TYPES = [
   {
     key: "habito",
     name: "Hábito",
+    color: "#22C55E",
+    icon: "Repeat",
     sortOrder: 4,
     isDefault: false,
     requiresCompletion: true,
@@ -58,6 +66,8 @@ const ITEM_TYPES = [
   {
     key: "objetivo",
     name: "Objetivo",
+    color: "#EF4444",
+    icon: "Target",
     sortOrder: 5,
     isDefault: false,
     requiresCompletion: true,
@@ -68,6 +78,8 @@ const ITEM_TYPES = [
   {
     key: "nota",
     name: "Nota",
+    color: "#6B7280",
+    icon: "StickyNote",
     sortOrder: 6,
     isDefault: false,
     requiresCompletion: false,

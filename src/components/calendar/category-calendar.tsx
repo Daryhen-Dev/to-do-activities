@@ -16,7 +16,9 @@ import {
 } from "@/lib/calendar";
 import { rescheduleEvent } from "@/lib/calendar-reschedule";
 import { useCalendarStore } from "@/stores/calendar-store";
+import { useItemTypeStore } from "@/stores/item-type-store";
 import { DetailSheet } from "@/components/ui/detail-sheet";
+import { ItemTypeBadge } from "@/components/tasks/item-type-badge";
 import { AgendaList } from "./agenda-list";
 import { CalendarToolbar } from "./calendar-toolbar";
 import { MonthGrid } from "./month-grid";
@@ -66,6 +68,8 @@ export function CategoryCalendar({
 }: CategoryCalendarProps) {
   const view = useCalendarStore((state) => state.view);
   const anchorDate = useCalendarStore((state) => state.anchorDate);
+  const ensureItemTypesLoaded = useItemTypeStore((state) => state.ensureLoaded);
+  const itemTypes = useItemTypeStore((state) => state.itemTypes);
 
   const { from, to } = rangeFor(view, anchorDate);
   const fromIso = from.toISOString();
@@ -74,6 +78,11 @@ export function CategoryCalendar({
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [peekEvent, setPeekEvent] = useState<CalendarEvent | null>(null);
+
+  // Load the item-type catalog so the detail sheet can show the type badge.
+  useEffect(() => {
+    void ensureItemTypesLoaded();
+  }, [ensureItemTypesLoaded]);
 
   useEffect(() => {
     let active = true;
@@ -107,6 +116,14 @@ export function CategoryCalendar({
 
   const weeks = useMemo(() => buildMonthGrid(anchorDate), [anchorDate]);
   const weekDays = useMemo(() => buildWeekDays(anchorDate), [anchorDate]);
+  const itemTypeById = useMemo(
+    () => new Map(itemTypes.map((type) => [type.id, type])),
+    [itemTypes],
+  );
+  const peekType =
+    peekEvent?.itemTypeId != null
+      ? itemTypeById.get(peekEvent.itemTypeId)
+      : undefined;
 
   /** Reschedules a dragged event via the shared optimistic-move helper. */
   function handleReschedule(
@@ -174,11 +191,20 @@ export function CategoryCalendar({
         title={peekEvent?.title ?? ""}
         description={peekEvent ? formatWhen(peekEvent) : undefined}
       >
-        {peekEvent?.description ? (
-          <p className="text-sm whitespace-pre-wrap">{peekEvent.description}</p>
-        ) : (
-          <p className="text-sm text-muted-foreground">No description.</p>
-        )}
+        <div className="grid gap-3">
+          {peekType ? (
+            <div className="text-xs text-muted-foreground">
+              <ItemTypeBadge itemType={peekType} />
+            </div>
+          ) : null}
+          {peekEvent?.description ? (
+            <p className="text-sm whitespace-pre-wrap">
+              {peekEvent.description}
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">No description.</p>
+          )}
+        </div>
       </DetailSheet>
     </div>
   );

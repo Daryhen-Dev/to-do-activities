@@ -42,6 +42,33 @@ describe("catalog repository (integration)", () => {
     expect(sortOrders).toEqual([...sortOrders].sort((a, b) => a - b));
   });
 
+  it("gives every active item type a color and an icon", async () => {
+    const itemTypes = await listActiveItemTypes();
+
+    expect(itemTypes.length).toBeGreaterThan(0);
+    expect(
+      itemTypes.every((it) => typeof it.color === "string" && it.color.length > 0),
+    ).toBe(true);
+    expect(
+      itemTypes.every((it) => typeof it.icon === "string" && it.icon.length > 0),
+    ).toBe(true);
+  });
+
+  it("assigns a distinct color to each active item type", async () => {
+    const itemTypes = await listActiveItemTypes();
+
+    const colors = itemTypes.map((it) => it.color);
+    expect(new Set(colors).size).toBe(colors.length);
+  });
+
+  it("gives the default item type its known icon", async () => {
+    const itemTypes = await listActiveItemTypes();
+
+    const defaultType = itemTypes.find((it) => it.isDefault);
+    expect(defaultType?.key).toBe("tarea");
+    expect(defaultType?.icon).toBe("ListChecks");
+  });
+
   it("excludes inactive rows from the item type listing", async () => {
     const inactive = await prisma.itemType.create({
       data: {

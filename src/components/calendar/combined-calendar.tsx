@@ -18,8 +18,10 @@ import {
 import { rescheduleEvent } from "@/lib/calendar-reschedule";
 import { useCalendarStore } from "@/stores/calendar-store";
 import { useCalendarFilterStore } from "@/stores/calendar-filter-store";
+import { useItemTypeStore } from "@/stores/item-type-store";
 import { useWorkspaceStore } from "@/stores/workspace-store";
 import { DetailSheet } from "@/components/ui/detail-sheet";
+import { ItemTypeBadge } from "@/components/tasks/item-type-badge";
 import { AgendaList } from "./agenda-list";
 import { CalendarToolbar } from "./calendar-toolbar";
 import { CategoryLegend } from "./category-legend";
@@ -63,6 +65,8 @@ export function CombinedCalendar() {
   const view = useCalendarStore((state) => state.view);
   const anchorDate = useCalendarStore((state) => state.anchorDate);
   const ensureLoaded = useWorkspaceStore((state) => state.ensureLoaded);
+  const ensureItemTypesLoaded = useItemTypeStore((state) => state.ensureLoaded);
+  const itemTypes = useItemTypeStore((state) => state.itemTypes);
   const hiddenCategoryIds = useCalendarFilterStore(
     (state) => state.hiddenCategoryIds,
   );
@@ -75,10 +79,12 @@ export function CombinedCalendar() {
   const [loading, setLoading] = useState(true);
   const [peekEvent, setPeekEvent] = useState<CalendarEvent | null>(null);
 
-  // Load the category tree so the legend has names/colors to render.
+  // Load the category tree so the legend has names/colors to render, and the
+  // item-type catalog so the detail sheet can show the type badge.
   useEffect(() => {
     void ensureLoaded();
-  }, [ensureLoaded]);
+    void ensureItemTypesLoaded();
+  }, [ensureLoaded, ensureItemTypesLoaded]);
 
   useEffect(() => {
     let active = true;
@@ -118,6 +124,15 @@ export function CombinedCalendar() {
     () => filterVisibleEvents(events, hiddenCategoryIds),
     [events, hiddenCategoryIds],
   );
+
+  const itemTypeById = useMemo(
+    () => new Map(itemTypes.map((type) => [type.id, type])),
+    [itemTypes],
+  );
+  const peekType =
+    peekEvent?.itemTypeId != null
+      ? itemTypeById.get(peekEvent.itemTypeId)
+      : undefined;
 
   /** Reschedules a dragged event via the shared optimistic-move helper. */
   function handleReschedule(
@@ -187,11 +202,20 @@ export function CombinedCalendar() {
         title={peekEvent?.title ?? ""}
         description={peekEvent ? formatWhen(peekEvent) : undefined}
       >
-        {peekEvent?.description ? (
-          <p className="text-sm whitespace-pre-wrap">{peekEvent.description}</p>
-        ) : (
-          <p className="text-sm text-muted-foreground">No description.</p>
-        )}
+        <div className="grid gap-3">
+          {peekType ? (
+            <div className="text-xs text-muted-foreground">
+              <ItemTypeBadge itemType={peekType} />
+            </div>
+          ) : null}
+          {peekEvent?.description ? (
+            <p className="text-sm whitespace-pre-wrap">
+              {peekEvent.description}
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">No description.</p>
+          )}
+        </div>
       </DetailSheet>
     </div>
   );

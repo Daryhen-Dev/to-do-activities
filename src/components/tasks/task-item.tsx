@@ -1,6 +1,12 @@
 "use client";
 
-import type { Category, List, PlanningItem, Priority } from "@prisma/client";
+import type {
+  Category,
+  ItemType,
+  List,
+  PlanningItem,
+  Priority,
+} from "@prisma/client";
 import { CalendarDays, Flag, ListTree, Pencil, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -9,6 +15,7 @@ import {
   TaskEditDialog,
   type TaskEditPayload,
 } from "@/components/tasks/task-edit-dialog";
+import { ItemTypeBadge } from "@/components/tasks/item-type-badge";
 import { cn } from "@/lib/utils";
 
 interface TaskItemProps {
@@ -17,7 +24,10 @@ interface TaskItemProps {
   statusName: string | undefined;
   priorityName: string | undefined;
   listName: string | undefined;
+  /** The item's resolved type, shown as a badge (undefined until loaded). */
+  itemType: ItemType | undefined;
   priorities: Priority[];
+  itemTypes: ItemType[];
   categories: Category[];
   lists: List[];
   onToggleComplete: (item: PlanningItem, completed: boolean) => void;
@@ -43,7 +53,9 @@ export function TaskItem({
   statusName,
   priorityName,
   listName,
+  itemType,
   priorities,
+  itemTypes,
   categories,
   lists,
   onToggleComplete,
@@ -75,6 +87,7 @@ export function TaskItem({
         ) : null}
         <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
           {statusName ? <span>{statusName}</span> : null}
+          {itemType ? <ItemTypeBadge itemType={itemType} /> : null}
           {listName ? (
             <span className="inline-flex items-center gap-1">
               <ListTree className="size-3" />
@@ -99,6 +112,7 @@ export function TaskItem({
       <TaskEditDialog
         item={item}
         priorities={priorities}
+        itemTypes={itemTypes}
         categories={categories}
         lists={lists}
         onSubmit={(payload) => onUpdate(item.id, payload)}
