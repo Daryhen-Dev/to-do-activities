@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   type CalendarEvent,
   type PositionedEvent,
+  computeRescheduledSchedule,
   layoutDayEvents,
   MINUTES_PER_DAY,
   isSameDay,
@@ -15,9 +16,15 @@ import { cn } from "@/lib/utils";
  * Presentational week/day time grid. Renders a header row (one column per day),
  * an all-day strip, and a scrollable hour body where timed events are placed by
  * their layout position. A live "now" indicator marks the current time on
- * today's column. Read-only: the only interaction is `onPeek` when an event is
- * clicked. Works with 1 day (day view) or 7 days (week view), and renders the
- * grid even when there are no events.
+ * today's column. Works with 1 day (day view) or 7 days (week view), and
+ * renders the grid even when there are no events.
+ *
+ * Timed events are read-only by default (click → `onPeek`). When `onReschedule`
+ * is supplied, timed blocks become draggable via Pointer Events: a block
+ * follows the pointer across columns, and on release the drop position resolves
+ * to a target day + minute that is handed to `computeRescheduledSchedule`. A
+ * drag that never crosses the movement threshold is treated as a click.
+ * All-day chips stay static in both modes.
  */
 
 /** Pixel height of a single hour row; the body is `24 * HOUR_HEIGHT` tall. */
@@ -31,6 +38,25 @@ const GUTTER_WIDTH = 64;
 
 /** Minute at which the body auto-scrolls into view on mount (~07:00). */
 const SCROLL_TO_HOUR = 7;
+
+/** Pointer travel (px) before a press turns into a drag rather than a click. */
+const DRAG_THRESHOLD = 4;
+
+/** In-flight pointer drag of a single timed event block. */
+interface DragState {
+  /** The event being dragged. */
+  event: CalendarEvent;
+  /** Pointer that started the drag (guards against multi-touch crosstalk). */
+  pointerId: number;
+  /** Pointer origin recorded on pointer-down, in client coordinates. */
+  originX: number;
+  originY: number;
+  /** Current pointer delta from the origin (drives the follow preview). */
+  dx: number;
+  dy: number;
+  /** True once the pointer has traveled past `DRAG_THRESHOLD`. */
+  dragging: boolean;
+}
 
 const TIME_FORMAT: Intl.DateTimeFormatOptions = {
   hour: "2-digit",
@@ -46,6 +72,15 @@ interface TimeGridProps {
   events: CalendarEvent[];
   /** Called when an event is clicked to open its details. */
   onPeek?: (event: CalendarEvent) => void;
+  /**
+   * When provided, timed blocks become draggable and this is invoked with the
+   * rescheduled window on drop. Absent → the grid stays read-only.
+   */
+  onReschedule?: (
+    event: CalendarEvent,
+    newStartAt: Date,
+    newEndAt: Date | null,
+  ) => void;
 }
 
 /** The header label for a day column, e.g. "Wed 15". */
@@ -64,13 +99,30 @@ function hourLabel(hour: number): string {
   return `${String(hour).padStart(2, "0")}:00`;
 }
 
-/** An absolutely-positioned, read-only timed event block. */
+/**
+ * An absolutely-positioned timed event block. Read-only when `draggable` is
+ * false (click → `onPeek`); when `draggable`, pointer handlers drive the drag
+ * and the block translates by `offset` while `dragging` so it follows the
+ * pointer (including across columns in week view).
+ */
 function TimedEvent({
   positioned,
   onPeek,
+  draggable,
+  offset,
+  dragging,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
 }: {
   positioned: PositionedEvent;
   onPeek?: (event: CalendarEvent) => void;
+  draggable: boolean;
+  offset: { dx: number; dy: number } | null;
+  dragging: boolean;
+  onPointerDown: (event: CalendarEvent, e: React.PointerEvent<HTMLButtonElement>) => void;
+  onPointerMove: (event: CalendarEvent, e: React.PointerEvent<HTMLButtonElement>) => void;
+  onPointerUp: (event: CalendarEvent, e: React.PointerEvent<HTMLButtonElement>) => void;
 }) {
   const { event, startMin, endMin, lane, lanes } = positioned;
   const label = eventLabel(event);
@@ -79,23 +131,117 @@ function TimedEvent({
     <button
       type="button"
       title={label}
-      onClick={() => onPeek?.(event)}
+      // Read-only mode keeps the click → peek behavior. In draggable mode the
+      // click is resolved from pointer-up instead (a non-drag press peeks), so
+      // no onClick is attached to avoid a double peek.
+      onClick={draggable ? undefined : () => onPeek?.(event)}
+      onPointerDown={draggable ? (e) => onPointerDown(event, e) : undefined}
+      onPointerMove={draggable ? (e) => onPointerMove(event, e) : undefined}
+      onPointerUp={draggable ? (e) => onPointerUp(event, e) : undefined}
       style={{
         top: `${(startMin / MINUTES_PER_DAY) * 100}%`,
         height: `${((endMin - startMin) / MINUTES_PER_DAY) * 100}%`,
         left: `${(lane / lanes) * 100}%`,
         width: `calc(${(1 / lanes) * 100}% - 2px)`,
+        transform:
+          dragging && offset
+            ? `translate(${offset.dx}px, ${offset.dy}px)`
+            : undefined,
+        zIndex: dragging ? 20 : undefined,
       }}
-      className="absolute overflow-hidden rounded bg-secondary px-1.5 py-0.5 text-left text-xs text-secondary-foreground hover:bg-secondary/80 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      className={cn(
+        "absolute overflow-hidden rounded bg-secondary px-1.5 py-0.5 text-left text-xs text-secondary-foreground hover:bg-secondary/80 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+        draggable && "cursor-grab touch-none",
+        dragging && "cursor-grabbing select-none shadow-lg",
+      )}
     >
       <span className="block truncate font-medium">{label}</span>
     </button>
   );
 }
 
-export function TimeGrid({ days, events, onPeek }: TimeGridProps) {
+export function TimeGrid({ days, events, onPeek, onReschedule }: TimeGridProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
+  // One DOM ref per day column, kept parallel to `days`, so a drop position can
+  // be resolved to the column it landed in via getBoundingClientRect().
+  const columnRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [now, setNow] = useState(() => new Date());
+  const [drag, setDrag] = useState<DragState | null>(null);
+
+  const draggable = Boolean(onReschedule);
+
+  // Begin a pending drag: capture the pointer so move/up keep firing on the
+  // block even if the pointer leaves it, and record the origin. The press is
+  // not yet a drag (it may resolve to a click on pointer-up).
+  const handlePointerDown = (
+    event: CalendarEvent,
+    e: React.PointerEvent<HTMLButtonElement>,
+  ) => {
+    if (!onReschedule) return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    setDrag({
+      event,
+      pointerId: e.pointerId,
+      originX: e.clientX,
+      originY: e.clientY,
+      dx: 0,
+      dy: 0,
+      dragging: false,
+    });
+  };
+
+  // Track pointer delta; cross the threshold once to enter the dragging state.
+  const handlePointerMove = (
+    event: CalendarEvent,
+    e: React.PointerEvent<HTMLButtonElement>,
+  ) => {
+    setDrag((prev) => {
+      if (!prev || prev.event.id !== event.id || prev.pointerId !== e.pointerId) {
+        return prev;
+      }
+      const dx = e.clientX - prev.originX;
+      const dy = e.clientY - prev.originY;
+      const dragging = prev.dragging || Math.hypot(dx, dy) > DRAG_THRESHOLD;
+      return { ...prev, dx, dy, dragging };
+    });
+  };
+
+  // Resolve the gesture: a non-drag press peeks; a real drag resolves the drop
+  // to a day column + minute and reschedules. A drop outside every column is a
+  // no-op. Either way, drag state is cleared.
+  const handlePointerUp = (
+    event: CalendarEvent,
+    e: React.PointerEvent<HTMLButtonElement>,
+  ) => {
+    const state = drag;
+    setDrag(null);
+    if (!state || state.event.id !== event.id) return;
+
+    if (!state.dragging) {
+      onPeek?.(event);
+      return;
+    }
+    if (!onReschedule) return;
+
+    // Find the day column horizontally containing the drop point.
+    const targetIndex = columnRefs.current.findIndex((col) => {
+      if (!col) return false;
+      const rect = col.getBoundingClientRect();
+      return e.clientX >= rect.left && e.clientX < rect.right;
+    });
+    if (targetIndex === -1) return; // Dropped outside any column → no-op.
+
+    const column = columnRefs.current[targetIndex];
+    if (!column) return;
+    const rect = column.getBoundingClientRect();
+    const targetMinute = ((e.clientY - rect.top) / HOUR_HEIGHT) * 60;
+    const { startAt, endAt } = computeRescheduledSchedule(
+      event,
+      days[targetIndex],
+      targetMinute,
+    );
+    onReschedule(event, startAt, endAt);
+  };
 
   // Keep the "now" indicator live without setting state in the effect body
   // (satisfies react-hooks/set-state-in-effect: setState runs in the callback).
@@ -193,6 +339,9 @@ export function TimeGrid({ days, events, onPeek }: TimeGridProps) {
             return (
               <div
                 key={day.toISOString()}
+                ref={(el) => {
+                  columnRefs.current[index] = el;
+                }}
                 style={{ height: columnHeight }}
                 className="relative border-r border-border last:border-r-0"
               >
@@ -206,13 +355,24 @@ export function TimeGrid({ days, events, onPeek }: TimeGridProps) {
                 ))}
 
                 {/* Timed event blocks. */}
-                {layout.timed.map((positioned) => (
-                  <TimedEvent
-                    key={positioned.event.id}
-                    positioned={positioned}
-                    onPeek={onPeek}
-                  />
-                ))}
+                {layout.timed.map((positioned) => {
+                  const isDragged = drag?.event.id === positioned.event.id;
+                  return (
+                    <TimedEvent
+                      key={positioned.event.id}
+                      positioned={positioned}
+                      onPeek={onPeek}
+                      draggable={draggable}
+                      offset={
+                        isDragged ? { dx: drag.dx, dy: drag.dy } : null
+                      }
+                      dragging={Boolean(isDragged && drag?.dragging)}
+                      onPointerDown={handlePointerDown}
+                      onPointerMove={handlePointerMove}
+                      onPointerUp={handlePointerUp}
+                    />
+                  );
+                })}
 
                 {/* Live "now" indicator (today only). */}
                 {isToday ? (

@@ -3,6 +3,7 @@ import type { PlanningItem } from "@prisma/client";
 import {
   buildMonthGrid,
   buildWeekDays,
+  computeRescheduledSchedule,
   eventsOnDay,
   groupEventsByDay,
   isSameDay,
@@ -10,6 +11,7 @@ import {
   MIN_EVENT_MINUTES,
   MINUTES_PER_DAY,
   rangeFor,
+  snapMinutes,
   startOfWeek,
   toCalendarEvents,
   type CalendarEvent,
@@ -611,5 +613,131 @@ describe("layoutDayEvents", () => {
         }
       }
     }
+  });
+});
+
+describe("snapMinutes", () => {
+  it("rounds down to the nearest 15 when below the halfway point (7 -> 0)", () => {
+    expect(snapMinutes(7)).toBe(0);
+  });
+
+  it("rounds up to the nearest 15 when at/above the halfway point (8 -> 15)", () => {
+    expect(snapMinutes(8)).toBe(15);
+  });
+
+  it("leaves exact multiples of the increment unchanged", () => {
+    expect(snapMinutes(0)).toBe(0);
+    expect(snapMinutes(15)).toBe(15);
+    expect(snapMinutes(30)).toBe(30);
+    expect(snapMinutes(MINUTES_PER_DAY)).toBe(MINUTES_PER_DAY);
+  });
+
+  it("clamps negative minutes to 0", () => {
+    expect(snapMinutes(-5)).toBe(0);
+    expect(snapMinutes(-1000)).toBe(0);
+  });
+
+  it("clamps minutes above a full day to 1440", () => {
+    expect(snapMinutes(1500)).toBe(MINUTES_PER_DAY);
+    expect(snapMinutes(9999)).toBe(MINUTES_PER_DAY);
+  });
+
+  it("honors a custom increment (30)", () => {
+    expect(snapMinutes(40, 30)).toBe(30); // 40/30 = 1.33 -> 1 -> 30
+    expect(snapMinutes(46, 30)).toBe(60); // 46/30 = 1.53 -> 2 -> 60
+    expect(snapMinutes(90, 30)).toBe(90); // exact multiple
+  });
+});
+
+describe("computeRescheduledSchedule", () => {
+  /** Minute-of-day (local) for a Date. */
+  const minuteOfDay = (d: Date) => d.getHours() * 60 + d.getMinutes();
+
+  it("preserves the duration and lands on the snapped minute (same day)", () => {
+    const event = makeEvent({
+      id: "ranged",
+      startAt: new Date(2026, 6, 15, 9, 0),
+      endAt: new Date(2026, 6, 15, 10, 0), // 60-min
+    });
+    const targetDay = new Date(2026, 6, 15);
+    const { startAt, endAt } = computeRescheduledSchedule(event, targetDay, 8 * 60);
+
+    expect(endAt).not.toBeNull();
+    expect(endAt!.getTime() - startAt.getTime()).toBe(60 * 60_000);
+    expect(isSameDay(startAt, targetDay)).toBe(true);
+    expect(minuteOfDay(startAt)).toBe(8 * 60); // 480 is a clean multiple of 15
+  });
+
+  it("preserves the duration and lands on the snapped minute (different day)", () => {
+    const event = makeEvent({
+      id: "ranged",
+      startAt: new Date(2026, 6, 15, 9, 0),
+      endAt: new Date(2026, 6, 15, 10, 0), // 60-min
+    });
+    const targetDay = new Date(2026, 6, 20);
+    const { startAt, endAt } = computeRescheduledSchedule(event, targetDay, 14 * 60);
+
+    expect(endAt!.getTime() - startAt.getTime()).toBe(60 * 60_000);
+    expect(isSameDay(startAt, targetDay)).toBe(true);
+    expect(minuteOfDay(startAt)).toBe(14 * 60);
+  });
+
+  it("moves the event onto the target day's calendar date", () => {
+    const event = makeEvent({
+      id: "ranged",
+      startAt: new Date(2026, 6, 15, 9, 0),
+      endAt: new Date(2026, 6, 15, 10, 0),
+    });
+    const targetDay = new Date(2026, 7, 3); // Aug 3 2026
+    const { startAt } = computeRescheduledSchedule(event, targetDay, 9 * 60);
+
+    expect(startAt.getFullYear()).toBe(2026);
+    expect(startAt.getMonth()).toBe(7);
+    expect(startAt.getDate()).toBe(3);
+  });
+
+  it("keeps endAt null for a point event and moves it to the snapped target", () => {
+    const event = makeEvent({
+      id: "point",
+      startAt: new Date(2026, 6, 15, 9, 0),
+      endAt: null,
+    });
+    const targetDay = new Date(2026, 6, 18);
+    const { startAt, endAt } = computeRescheduledSchedule(event, targetDay, 11 * 60);
+
+    expect(endAt).toBeNull();
+    expect(isSameDay(startAt, targetDay)).toBe(true);
+    expect(minuteOfDay(startAt)).toBe(11 * 60);
+  });
+
+  it("snaps a non-aligned target minute (612 = 10:12 -> 615 = 10:15)", () => {
+    const event = makeEvent({
+      id: "ranged",
+      startAt: new Date(2026, 6, 15, 9, 0),
+      endAt: new Date(2026, 6, 15, 10, 0),
+    });
+    const targetDay = new Date(2026, 6, 15);
+    const { startAt } = computeRescheduledSchedule(event, targetDay, 612);
+
+    expect(startAt.getHours()).toBe(10);
+    expect(startAt.getMinutes()).toBe(15);
+    expect(minuteOfDay(startAt)).toBe(615);
+  });
+
+  it("clamps the start so a long event never runs past midnight", () => {
+    const event = makeEvent({
+      id: "long",
+      startAt: new Date(2026, 6, 15, 9, 0),
+      endAt: new Date(2026, 6, 15, 11, 0), // 120-min
+    });
+    const targetDay = new Date(2026, 6, 15);
+    // Drop at 23:20 (1400): block = 120, maxStart = 1320 (22:00).
+    const { startAt, endAt } = computeRescheduledSchedule(event, targetDay, 1400);
+
+    expect(minuteOfDay(startAt) + 120).toBeLessThanOrEqual(MINUTES_PER_DAY);
+    expect(minuteOfDay(startAt)).toBe(1320); // 22:00
+    expect(startAt.getHours()).toBe(22);
+    expect(startAt.getMinutes()).toBe(0);
+    expect(endAt!.getTime() - startAt.getTime()).toBe(120 * 60_000);
   });
 });

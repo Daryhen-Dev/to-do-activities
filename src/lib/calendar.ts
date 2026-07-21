@@ -308,3 +308,40 @@ export function layoutDayEvents(
 
   return { allDay, timed };
 }
+
+/** Rounds a minute-of-day to the nearest `increment`, clamped to [0, 1440]. */
+export function snapMinutes(minute: number, increment = 15): number {
+  const snapped = Math.round(minute / increment) * increment;
+  return Math.max(0, Math.min(MINUTES_PER_DAY, snapped));
+}
+
+/**
+ * The new schedule when `event` is dropped on `targetDay` at
+ * `targetStartMinute` (minutes from local midnight). The start is snapped and
+ * clamped so the event stays within the target day; the duration is preserved
+ * (`endAt` shifts with `startAt`), and a point-in-time event (no `endAt`) keeps
+ * `endAt` null. Pure — the caller supplies the target day/minute measured from
+ * the grid.
+ */
+export function computeRescheduledSchedule(
+  event: CalendarEvent,
+  targetDay: Date,
+  targetStartMinute: number,
+  increment = 15,
+): { startAt: Date; endAt: Date | null } {
+  const durationMs = event.endAt
+    ? event.endAt.getTime() - event.startAt.getTime()
+    : null;
+  const durationMin = durationMs !== null ? durationMs / 60_000 : 0;
+
+  // Keep the whole block within the day: a ranged event may not end past
+  // midnight, and a point event stays on a valid in-day slot.
+  const block = Math.max(durationMin, increment);
+  const maxStart = Math.max(0, MINUTES_PER_DAY - block);
+  const startMin = Math.min(snapMinutes(targetStartMinute, increment), maxStart);
+
+  const dayStart = startOfDay(targetDay).getTime();
+  const startAt = new Date(dayStart + startMin * 60_000);
+  const endAt = durationMs !== null ? new Date(startAt.getTime() + durationMs) : null;
+  return { startAt, endAt };
+}

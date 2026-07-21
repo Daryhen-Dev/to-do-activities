@@ -28,6 +28,18 @@ import { TimeGrid } from "./time-grid";
  * (hover-hold or click) in the month view. Read-only — no mutations.
  */
 
+const JSON_HEADERS = { "content-type": "application/json" };
+
+/** Extracts the API's `{ error }` message, falling back to a default. */
+async function errorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: string };
+    return body.error ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 interface CategoryCalendarProps {
   categoryId: string;
   categoryName: string;
@@ -105,6 +117,39 @@ export function CategoryCalendar({
 
   const weeks = useMemo(() => buildMonthGrid(anchorDate), [anchorDate]);
   const weekDays = useMemo(() => buildWeekDays(anchorDate), [anchorDate]);
+
+  /**
+   * Reschedules a dragged event: optimistically move it, persist the new
+   * schedule, and revert (with a toast) if the server rejects it — including
+   * the no-overlap rule's 400. Only `startAt`/`endAt` change.
+   */
+  async function handleReschedule(
+    event: CalendarEvent,
+    newStartAt: Date,
+    newEndAt: Date | null,
+  ) {
+    const snapshot = events;
+    setEvents((prev) =>
+      prev.map((current) =>
+        current.id === event.id
+          ? { ...current, startAt: newStartAt, endAt: newEndAt }
+          : current,
+      ),
+    );
+
+    const res = await fetch(`/api/planning-items/${event.id}`, {
+      method: "PATCH",
+      headers: JSON_HEADERS,
+      body: JSON.stringify({
+        startAt: newStartAt.toISOString(),
+        endAt: newEndAt ? newEndAt.toISOString() : null,
+      }),
+    });
+    if (!res.ok) {
+      setEvents(snapshot);
+      toast.error(await errorMessage(res, "Failed to reschedule the activity"));
+    }
+  }
   const groups = useMemo(
     () => groupEventsByDay(events, new Date(fromIso)),
     [events, fromIso],
@@ -135,11 +180,21 @@ export function CategoryCalendar({
         </div>
       ) : view === "week" ? (
         <div className="min-h-0 flex-1">
-          <TimeGrid days={weekDays} events={events} onPeek={setPeekEvent} />
+          <TimeGrid
+            days={weekDays}
+            events={events}
+            onPeek={setPeekEvent}
+            onReschedule={handleReschedule}
+          />
         </div>
       ) : view === "day" ? (
         <div className="min-h-0 flex-1">
-          <TimeGrid days={[anchorDate]} events={events} onPeek={setPeekEvent} />
+          <TimeGrid
+            days={[anchorDate]}
+            events={events}
+            onPeek={setPeekEvent}
+            onReschedule={handleReschedule}
+          />
         </div>
       ) : (
         <AgendaList groups={groups} />
