@@ -8,8 +8,6 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useReminderStore } from "@/stores/reminder-store";
@@ -113,8 +111,9 @@ export function ReminderBell() {
         }
       />
       <DropdownMenuContent align="end" className="w-80">
-        <DropdownMenuLabel>Reminders</DropdownMenuLabel>
-        <DropdownMenuSeparator />
+        <div className="border-b px-1.5 py-1 text-xs font-medium text-muted-foreground">
+          Reminders
+        </div>
         {count === 0 ? (
           <p className="px-2 py-6 text-center text-sm text-muted-foreground">
             No due reminders
