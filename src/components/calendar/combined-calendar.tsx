@@ -1,6 +1,5 @@
 "use client";
 
-import type { PlanningItem } from "@prisma/client";
 import { Loader2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -9,31 +8,31 @@ import {
   buildMonthGrid,
   buildWeekDays,
   type CalendarEvent,
+  filterVisibleEvents,
   groupEventsByDay,
   isSameDay,
   rangeFor,
-  toCalendarEvents,
+  type ScheduledItemWithCategory,
+  toCombinedCalendarEvents,
 } from "@/lib/calendar";
 import { rescheduleEvent } from "@/lib/calendar-reschedule";
 import { useCalendarStore } from "@/stores/calendar-store";
+import { useCalendarFilterStore } from "@/stores/calendar-filter-store";
+import { useWorkspaceStore } from "@/stores/workspace-store";
 import { DetailSheet } from "@/components/ui/detail-sheet";
 import { AgendaList } from "./agenda-list";
 import { CalendarToolbar } from "./calendar-toolbar";
+import { CategoryLegend } from "./category-legend";
 import { MonthGrid } from "./month-grid";
 import { TimeGrid } from "./time-grid";
 
 /**
- * Container for a single category's calendar. Owns event data fetching for the
- * currently visible range (derived from the shared view/anchor store), fills
- * the available screen space, and opens a details Sheet when an event is peeked
- * (hover-hold or click) in the month view. Timed events are draggable to
- * reschedule (week/day) via the shared reschedule helper.
+ * Container for the combined multi-category calendar. Fetches the user's
+ * scheduled events across ALL categories for the visible range (shared
+ * view/anchor store), colors them per category, and filters them by the
+ * per-category toggles. Timed events are draggable to reschedule (week/day),
+ * reusing the shared reschedule helper and the cross-category no-overlap rule.
  */
-
-interface CategoryCalendarProps {
-  categoryId: string;
-  categoryName: string;
-}
 
 const DATE_FORMAT: Intl.DateTimeFormatOptions = {
   weekday: "long",
@@ -60,12 +59,13 @@ function formatWhen(event: CalendarEvent): string {
   return `${date} ${start} – ${endDate} ${end}`;
 }
 
-export function CategoryCalendar({
-  categoryId,
-  categoryName,
-}: CategoryCalendarProps) {
+export function CombinedCalendar() {
   const view = useCalendarStore((state) => state.view);
   const anchorDate = useCalendarStore((state) => state.anchorDate);
+  const ensureLoaded = useWorkspaceStore((state) => state.ensureLoaded);
+  const hiddenCategoryIds = useCalendarFilterStore(
+    (state) => state.hiddenCategoryIds,
+  );
 
   const { from, to } = rangeFor(view, anchorDate);
   const fromIso = from.toISOString();
@@ -75,6 +75,11 @@ export function CategoryCalendar({
   const [loading, setLoading] = useState(true);
   const [peekEvent, setPeekEvent] = useState<CalendarEvent | null>(null);
 
+  // Load the category tree so the legend has names/colors to render.
+  useEffect(() => {
+    void ensureLoaded();
+  }, [ensureLoaded]);
+
   useEffect(() => {
     let active = true;
 
@@ -82,16 +87,16 @@ export function CategoryCalendar({
       setLoading(true);
       try {
         const res = await fetch(
-          `/api/categories/${categoryId}/calendar?from=${encodeURIComponent(
+          `/api/calendar?from=${encodeURIComponent(
             fromIso,
           )}&to=${encodeURIComponent(toIso)}`,
         );
         if (!res.ok) {
           throw new Error("request failed");
         }
-        const rows = (await res.json()) as PlanningItem[];
+        const rows = (await res.json()) as ScheduledItemWithCategory[];
         if (!active) return;
-        setEvents(toCalendarEvents(rows));
+        setEvents(toCombinedCalendarEvents(rows));
       } catch {
         if (active) toast.error("Failed to load the calendar");
       } finally {
@@ -103,10 +108,16 @@ export function CategoryCalendar({
     return () => {
       active = false;
     };
-  }, [categoryId, fromIso, toIso]);
+  }, [fromIso, toIso]);
 
   const weeks = useMemo(() => buildMonthGrid(anchorDate), [anchorDate]);
   const weekDays = useMemo(() => buildWeekDays(anchorDate), [anchorDate]);
+
+  // Only render events whose category is toggled on.
+  const visibleEvents = useMemo(
+    () => filterVisibleEvents(events, hiddenCategoryIds),
+    [events, hiddenCategoryIds],
+  );
 
   /** Reschedules a dragged event via the shared optimistic-move helper. */
   function handleReschedule(
@@ -116,15 +127,16 @@ export function CategoryCalendar({
   ) {
     void rescheduleEvent(event, newStartAt, newEndAt, events, setEvents);
   }
+
   const groups = useMemo(
-    () => groupEventsByDay(events, new Date(fromIso)),
-    [events, fromIso],
+    () => groupEventsByDay(visibleEvents, new Date(fromIso)),
+    [visibleEvents, fromIso],
   );
 
   return (
     <div className="flex flex-1 flex-col gap-4">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">{categoryName}</h1>
+        <h1 className="text-xl font-semibold">Calendar</h1>
         {loading ? (
           <Loader2
             className="size-4 animate-spin text-muted-foreground"
@@ -134,12 +146,13 @@ export function CategoryCalendar({
       </div>
 
       <CalendarToolbar />
+      <CategoryLegend />
 
       {view === "month" ? (
         <div className="min-h-0 flex-1">
           <MonthGrid
             weeks={weeks}
-            events={events}
+            events={visibleEvents}
             anchorMonth={anchorDate.getMonth()}
             onPeek={setPeekEvent}
           />
@@ -148,7 +161,7 @@ export function CategoryCalendar({
         <div className="min-h-0 flex-1">
           <TimeGrid
             days={weekDays}
-            events={events}
+            events={visibleEvents}
             onPeek={setPeekEvent}
             onReschedule={handleReschedule}
           />
@@ -157,7 +170,7 @@ export function CategoryCalendar({
         <div className="min-h-0 flex-1">
           <TimeGrid
             days={[anchorDate]}
-            events={events}
+            events={visibleEvents}
             onPeek={setPeekEvent}
             onReschedule={handleReschedule}
           />

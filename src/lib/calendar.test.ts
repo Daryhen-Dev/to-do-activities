@@ -14,8 +14,12 @@ import {
   snapMinutes,
   startOfWeek,
   toCalendarEvents,
+  toCombinedCalendarEvents,
+  filterVisibleEvents,
   type CalendarEvent,
+  type ScheduledItemWithCategory,
 } from "./calendar";
+import { CATEGORY_COLOR_PALETTE, resolveCategoryColor } from "./category-color";
 
 /**
  * Exhaustive unit tests for the pure calendar helpers. Every `Date` is built
@@ -739,5 +743,179 @@ describe("computeRescheduledSchedule", () => {
     expect(startAt.getHours()).toBe(22);
     expect(startAt.getMinutes()).toBe(0);
     expect(endAt!.getTime() - startAt.getTime()).toBe(120 * 60_000);
+  });
+});
+
+/**
+ * Builds a ScheduledItemWithCategory-shaped row for toCombinedCalendarEvents.
+ * Mirrors makeRow's casting approach (partial object cast) since a full
+ * PlanningItem has many unrelated fields not exercised here.
+ */
+function makeCombinedRow(row: {
+  id: string;
+  title: string;
+  startAt: string | null;
+  endAt: string | null;
+  allDay?: boolean;
+  categoryId: string;
+  categoryName: string;
+  categoryColor: string | null;
+}): ScheduledItemWithCategory {
+  return {
+    id: row.id,
+    title: row.title,
+    startAt: row.startAt,
+    endAt: row.endAt,
+    allDay: row.allDay ?? false,
+    categoryId: row.categoryId,
+    categoryName: row.categoryName,
+    categoryColor: row.categoryColor,
+  } as unknown as ScheduledItemWithCategory;
+}
+
+describe("toCombinedCalendarEvents", () => {
+  it("attaches categoryId, categoryName, and a resolved color to each event", () => {
+    const startIso = new Date(2026, 6, 15, 9, 0).toISOString();
+    const rows = [
+      makeCombinedRow({
+        id: "1",
+        title: "Meeting",
+        startAt: startIso,
+        endAt: null,
+        categoryId: "cat-1",
+        categoryName: "Work",
+        categoryColor: "#123456",
+      }),
+    ];
+
+    const events = toCombinedCalendarEvents(rows);
+    expect(events).toHaveLength(1);
+    expect(events[0].categoryId).toBe("cat-1");
+    expect(events[0].categoryName).toBe("Work");
+    // Explicit color is passed through by resolveCategoryColor.
+    expect(events[0].color).toBe("#123456");
+  });
+
+  it("derives a stable palette color when categoryColor is null", () => {
+    const startIso = new Date(2026, 6, 15, 9, 0).toISOString();
+    const rows = [
+      makeCombinedRow({
+        id: "1",
+        title: "Meeting",
+        startAt: startIso,
+        endAt: null,
+        categoryId: "cat-42",
+        categoryName: "Personal",
+        categoryColor: null,
+      }),
+    ];
+
+    const events = toCombinedCalendarEvents(rows);
+    expect(events[0].color).toBe(resolveCategoryColor(null, "cat-42"));
+    expect(CATEGORY_COLOR_PALETTE).toContain(events[0].color);
+  });
+
+  it("parses ISO-string startAt/endAt into Date instances", () => {
+    const startIso = new Date(2026, 6, 15, 9, 0).toISOString();
+    const endIso = new Date(2026, 6, 15, 10, 0).toISOString();
+    const rows = [
+      makeCombinedRow({
+        id: "1",
+        title: "Meeting",
+        startAt: startIso,
+        endAt: endIso,
+        categoryId: "cat-1",
+        categoryName: "Work",
+        categoryColor: null,
+      }),
+    ];
+
+    const events = toCombinedCalendarEvents(rows);
+    expect(events[0].startAt).toBeInstanceOf(Date);
+    expect(events[0].endAt).toBeInstanceOf(Date);
+    expect(events[0].startAt.getTime()).toBe(new Date(startIso).getTime());
+    expect(events[0].endAt?.getTime()).toBe(new Date(endIso).getTime());
+  });
+
+  it("drops rows with a null startAt (unscheduled)", () => {
+    const startIso = new Date(2026, 6, 15, 9, 0).toISOString();
+    const rows = [
+      makeCombinedRow({
+        id: "1",
+        title: "Scheduled",
+        startAt: startIso,
+        endAt: null,
+        categoryId: "cat-1",
+        categoryName: "Work",
+        categoryColor: null,
+      }),
+      makeCombinedRow({
+        id: "2",
+        title: "Unscheduled",
+        startAt: null,
+        endAt: null,
+        categoryId: "cat-1",
+        categoryName: "Work",
+        categoryColor: null,
+      }),
+    ];
+
+    const events = toCombinedCalendarEvents(rows);
+    expect(events.map((e) => e.id)).toEqual(["1"]);
+  });
+
+  it("keeps endAt null when the row's endAt is null and preserves allDay", () => {
+    const startIso = new Date(2026, 6, 15, 0, 0).toISOString();
+    const rows = [
+      makeCombinedRow({
+        id: "1",
+        title: "Holiday",
+        startAt: startIso,
+        endAt: null,
+        allDay: true,
+        categoryId: "cat-1",
+        categoryName: "Work",
+        categoryColor: null,
+      }),
+    ];
+
+    const events = toCombinedCalendarEvents(rows);
+    expect(events[0].endAt).toBeNull();
+    expect(events[0].allDay).toBe(true);
+  });
+});
+
+describe("filterVisibleEvents", () => {
+  const catAEvent = makeEvent({ id: "a", startAt: new Date(2026, 6, 15, 9, 0) });
+  const catBEvent = makeEvent({ id: "b", startAt: new Date(2026, 6, 15, 10, 0) });
+  // makeEvent doesn't set categoryId; attach it explicitly for these tests.
+  const withCategory = (event: CalendarEvent, categoryId: string): CalendarEvent => ({
+    ...event,
+    categoryId,
+  });
+
+  it("returns all events when hiddenIds is empty", () => {
+    const events = [withCategory(catAEvent, "cat-a"), withCategory(catBEvent, "cat-b")];
+    const result = filterVisibleEvents(events, new Set<string>());
+    expect(result).toEqual(events);
+  });
+
+  it("removes only the events whose category is hidden", () => {
+    const events = [withCategory(catAEvent, "cat-a"), withCategory(catBEvent, "cat-b")];
+    const result = filterVisibleEvents(events, new Set<string>(["cat-a"]));
+    expect(result.map((e) => e.id)).toEqual(["b"]);
+  });
+
+  it("returns [] when hiddenIds covers every present category", () => {
+    const events = [withCategory(catAEvent, "cat-a"), withCategory(catBEvent, "cat-b")];
+    const result = filterVisibleEvents(events, new Set<string>(["cat-a", "cat-b"]));
+    expect(result).toEqual([]);
+  });
+
+  it("always keeps events without a categoryId, even when hiddenIds is non-empty", () => {
+    const noCategory = makeEvent({ id: "no-cat", startAt: new Date(2026, 6, 15, 11, 0) });
+    const events = [withCategory(catAEvent, "cat-a"), noCategory];
+    const result = filterVisibleEvents(events, new Set<string>(["cat-a"]));
+    expect(result.map((e) => e.id)).toEqual(["no-cat"]);
   });
 });

@@ -126,6 +126,9 @@ function TimedEvent({
 }) {
   const { event, startMin, endMin, lane, lanes } = positioned;
   const label = eventLabel(event);
+  // Combined view: color the block by its category (accent border + tint),
+  // keeping readable text. Absent color → default block styling.
+  const colored = Boolean(event.color);
 
   return (
     <button
@@ -148,9 +151,15 @@ function TimedEvent({
             ? `translate(${offset.dx}px, ${offset.dy}px)`
             : undefined,
         zIndex: dragging ? 20 : undefined,
+        ...(colored
+          ? { borderLeftColor: event.color, backgroundColor: `${event.color}26` }
+          : {}),
       }}
       className={cn(
-        "absolute overflow-hidden rounded bg-secondary px-1.5 py-0.5 text-left text-xs text-secondary-foreground hover:bg-secondary/80 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+        "absolute overflow-hidden rounded px-1.5 py-0.5 text-left text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+        colored
+          ? "border-l-[3px] text-foreground hover:opacity-80"
+          : "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         draggable && "cursor-grab touch-none",
         dragging && "cursor-grabbing select-none shadow-lg",
       )}
@@ -299,17 +308,33 @@ export function TimeGrid({ days, events, onPeek, onReschedule }: TimeGridProps) 
             key={days[index].toISOString()}
             className="flex min-h-8 flex-col gap-1 border-r border-border p-1 last:border-r-0"
           >
-            {layout.allDay.map((event) => (
-              <button
-                key={event.id}
-                type="button"
-                title={event.title}
-                onClick={() => onPeek?.(event)}
-                className="w-full truncate rounded bg-secondary px-1.5 py-0.5 text-left text-xs text-secondary-foreground hover:bg-secondary/80 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-              >
-                {event.title}
-              </button>
-            ))}
+            {layout.allDay.map((event) => {
+              const colored = Boolean(event.color);
+              return (
+                <button
+                  key={event.id}
+                  type="button"
+                  title={event.title}
+                  onClick={() => onPeek?.(event)}
+                  style={
+                    colored
+                      ? {
+                          borderLeftColor: event.color,
+                          backgroundColor: `${event.color}26`,
+                        }
+                      : undefined
+                  }
+                  className={cn(
+                    "w-full truncate rounded px-1.5 py-0.5 text-left text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                    colored
+                      ? "border-l-[3px] text-foreground hover:opacity-80"
+                      : "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+                  )}
+                >
+                  {event.title}
+                </button>
+              );
+            })}
           </div>
         ))}
       </div>

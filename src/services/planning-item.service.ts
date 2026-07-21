@@ -9,9 +9,11 @@ import {
   findOwnedPlanningItem,
   listPlanningItemsByUser,
   listScheduledItemsByCategory,
+  listScheduledItemsForUser,
   softDeletePlanningItem,
   updatePlanningItem,
 } from "../repositories/planning-item.repository";
+import type { ScheduledItemWithCategory } from "../lib/calendar";
 import { findOwnedList } from "../repositories/list.repository";
 import { findOwnedCategory } from "../repositories/category.repository";
 import type {
@@ -143,6 +145,21 @@ export async function listScheduledItemsForCategory(
   }
 
   return listScheduledItemsByCategory(userId, categoryId, from, to);
+}
+
+/**
+ * Scheduled items of the current user across ALL their categories overlapping
+ * the `[from, to)` window — the data source for the combined multi-category
+ * calendar. The acting user is resolved server-side (authoritative ownership),
+ * so no per-category precheck is needed: the repository query is already scoped
+ * to `userId`. Each item carries its owning category's id/name/color.
+ */
+export async function listScheduledItemsForCurrentUserRange(
+  from: Date,
+  to: Date,
+): Promise<ScheduledItemWithCategory[]> {
+  const userId = await getCurrentUserId();
+  return listScheduledItemsForUser(userId, from, to);
 }
 
 /**

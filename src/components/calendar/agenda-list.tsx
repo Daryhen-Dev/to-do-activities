@@ -51,6 +51,14 @@ export function AgendaList({ groups }: AgendaListProps) {
                 key={event.id}
                 className="flex items-baseline gap-3 rounded-lg border border-border px-3 py-2"
               >
+                {event.color ? (
+                  <span
+                    aria-hidden
+                    style={{ backgroundColor: event.color }}
+                    className="mt-1.5 size-2 shrink-0 rounded-full"
+                    title={event.categoryName}
+                  />
+                ) : null}
                 <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
                   {timeLabel(event)}
                 </span>

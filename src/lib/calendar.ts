@@ -1,4 +1,5 @@
 import type { PlanningItem } from "@prisma/client";
+import { resolveCategoryColor } from "./category-color";
 
 /**
  * Pure calendar logic — grid construction, range windows, and event bucketing.
@@ -19,6 +20,24 @@ export interface CalendarEvent {
   allDay: boolean;
   /** Optional details shown in the event peek panel. */
   description?: string | null;
+  /** Owning category id — present only in the combined multi-category view. */
+  categoryId?: string;
+  /** Owning category name — present only in the combined view. */
+  categoryName?: string;
+  /** Resolved display color (already run through `resolveCategoryColor`). */
+  color?: string;
+}
+
+/**
+ * A planning item enriched with its owning category, as returned by the
+ * combined range endpoint (`GET /api/calendar`). Assembled in the repository
+ * from the `List → Category` join; `categoryColor` is the category's raw
+ * `Category.color` (nullable), resolved to a display color on the client.
+ */
+export interface ScheduledItemWithCategory extends PlanningItem {
+  categoryId: string;
+  categoryName: string;
+  categoryColor: string | null;
 }
 
 /** How many days ahead the agenda window looks. */
@@ -189,6 +208,52 @@ export function toCalendarEvents(rows: PlanningItem[]): CalendarEvent[] {
     });
   }
   return events;
+}
+
+/**
+ * Maps combined-endpoint rows into `CalendarEvent`s: reuses the scheduled-item
+ * parsing (skip items with no `startAt`, parse dates) and additionally attaches
+ * each item's `categoryId`, `categoryName`, and a resolved display `color`
+ * (`resolveCategoryColor(categoryColor, categoryId)`). Powers the combined
+ * multi-category calendar.
+ */
+export function toCombinedCalendarEvents(
+  rows: ScheduledItemWithCategory[],
+): CalendarEvent[] {
+  const events: CalendarEvent[] = [];
+  for (const row of rows) {
+    if (!row.startAt) continue;
+    const startAt = new Date(row.startAt);
+    if (Number.isNaN(startAt.getTime())) continue;
+    const end = row.endAt ? new Date(row.endAt) : null;
+    events.push({
+      id: row.id,
+      title: row.title,
+      startAt,
+      endAt: end && !Number.isNaN(end.getTime()) ? end : null,
+      allDay: row.allDay,
+      description: row.description ?? null,
+      categoryId: row.categoryId,
+      categoryName: row.categoryName,
+      color: resolveCategoryColor(row.categoryColor, row.categoryId),
+    });
+  }
+  return events;
+}
+
+/**
+ * Events whose owning category is NOT hidden. An empty `hiddenIds` returns all
+ * events; a `hiddenIds` covering every present category returns none. Events
+ * without a `categoryId` (per-category view) are always kept.
+ */
+export function filterVisibleEvents(
+  events: CalendarEvent[],
+  hiddenIds: ReadonlySet<string>,
+): CalendarEvent[] {
+  if (hiddenIds.size === 0) return events;
+  return events.filter(
+    (event) => !event.categoryId || !hiddenIds.has(event.categoryId),
+  );
 }
 
 /** Minutes in a day; timed events are positioned within `[0, 1440]`. */

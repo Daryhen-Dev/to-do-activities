@@ -1,5 +1,6 @@
 import type { Category, List, PlanningItem } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { ScheduledItemWithCategory } from "../lib/calendar";
 import { DEV_USER_ID } from "../lib/dev-user";
 import { NotFoundError, ValidationError } from "../lib/errors";
 
@@ -17,6 +18,7 @@ vi.mock("../repositories/planning-item.repository", () => ({
   findOwnedPlanningItem: vi.fn(),
   listPlanningItemsByUser: vi.fn(),
   listScheduledItemsByCategory: vi.fn(),
+  listScheduledItemsForUser: vi.fn(),
   softDeletePlanningItem: vi.fn(),
   updatePlanningItem: vi.fn(),
 }));
@@ -43,6 +45,7 @@ import {
   findOwnedPlanningItem,
   listPlanningItemsByUser,
   listScheduledItemsByCategory,
+  listScheduledItemsForUser,
   softDeletePlanningItem,
   updatePlanningItem,
 } from "../repositories/planning-item.repository";
@@ -52,6 +55,7 @@ import {
   getPlanningItemForCurrentUser,
   listPlanningItemsForCurrentUser,
   listScheduledItemsForCategory,
+  listScheduledItemsForCurrentUserRange,
   updatePlanningItemForCurrentUser,
 } from "./planning-item.service";
 
@@ -64,6 +68,7 @@ const mockSoftDelete = vi.mocked(softDeletePlanningItem);
 const mockUpdate = vi.mocked(updatePlanningItem);
 const mockFindOwnedList = vi.mocked(findOwnedList);
 const mockListScheduledByCategory = vi.mocked(listScheduledItemsByCategory);
+const mockListScheduledForUser = vi.mocked(listScheduledItemsForUser);
 const mockFindOwnedCategory = vi.mocked(findOwnedCategory);
 const mockFindOverlap = vi.mocked(findOverlappingTimedItem);
 
@@ -361,6 +366,47 @@ describe("listScheduledItemsForCategory", () => {
       to,
     );
     expect(result).toBe(items);
+  });
+});
+
+describe("listScheduledItemsForCurrentUserRange", () => {
+  const from = new Date("2026-07-10T00:00:00.000Z");
+  const to = new Date("2026-07-17T00:00:00.000Z");
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // The combined range is scoped by the server-resolved user across ALL
+  // categories, so there is no per-category ownership precheck: the service
+  // simply resolves the current user (stubbed getCurrentUserId) and delegates
+  // to the repo with that user and the window, returning the rows verbatim.
+  it("delegates to the repository with the resolved current user, from and to", async () => {
+    const items = [
+      { id: "item-1", categoryId: "cat-1" },
+      { id: "item-2", categoryId: "cat-2" },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ] as any as ScheduledItemWithCategory[];
+    mockListScheduledForUser.mockResolvedValue(items);
+
+    const result = await listScheduledItemsForCurrentUserRange(from, to);
+
+    expect(mockListScheduledForUser).toHaveBeenCalledWith(
+      DEV_USER_ID,
+      from,
+      to,
+    );
+    expect(result).toBe(items);
+  });
+
+  // No category ownership repository is consulted for the combined range —
+  // ownership is enforced entirely by the userId-scoped query.
+  it("does not consult the category ownership repository", async () => {
+    mockListScheduledForUser.mockResolvedValue([]);
+
+    await listScheduledItemsForCurrentUserRange(from, to);
+
+    expect(mockFindOwnedCategory).not.toHaveBeenCalled();
   });
 });
 

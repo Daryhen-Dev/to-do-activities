@@ -1,6 +1,7 @@
 import { Prisma, type PlanningItem } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { NotFoundError } from "../lib/errors";
+import type { ScheduledItemWithCategory } from "../lib/calendar";
 
 /**
  * Sole Prisma import boundary for the planning-item vertical slice. No
@@ -112,6 +113,52 @@ export async function listScheduledItemsByCategory(
     },
     orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
   });
+}
+
+/**
+ * Scheduled items of the WHOLE user (across all categories) whose schedule
+ * overlaps the `[from, to)` window, each enriched with its owning category's
+ * id/name/color — the data source for the combined multi-category calendar.
+ * Same overlap predicate as `listScheduledItemsByCategory`
+ * (`startAt < to AND coalesce(endAt, startAt) >= from`), but scoped by `userId`
+ * instead of a single category. Joins `List → Category` and flattens to
+ * `ScheduledItemWithCategory` so no Prisma relation shape leaks past this layer.
+ */
+export async function listScheduledItemsForUser(
+  userId: string,
+  from: Date,
+  to: Date,
+): Promise<ScheduledItemWithCategory[]> {
+  const rows = await prisma.planningItem.findMany({
+    where: {
+      userId,
+      deletedAt: null,
+      startAt: { not: null, lt: to },
+      OR: [
+        { endAt: null, startAt: { gte: from } },
+        { endAt: { gte: from } },
+      ],
+      list: {
+        deletedAt: null,
+        category: { userId, deletedAt: null },
+      },
+    },
+    include: {
+      list: {
+        select: {
+          category: { select: { id: true, name: true, color: true } },
+        },
+      },
+    },
+    orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
+  });
+
+  return rows.map(({ list, ...item }) => ({
+    ...item,
+    categoryId: list.category.id,
+    categoryName: list.category.name,
+    categoryColor: list.category.color,
+  }));
 }
 
 /**

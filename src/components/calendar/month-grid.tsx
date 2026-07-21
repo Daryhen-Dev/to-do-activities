@@ -50,12 +50,26 @@ function EventChip({
   event: CalendarEvent;
   onPeek?: (event: CalendarEvent) => void;
 }) {
+  // In the combined view each event carries its category `color`, applied as an
+  // accent (left border + light tint) so text contrast never depends on the
+  // hue. Without a color (per-category view) the default chip styling is used.
+  const colored = Boolean(event.color);
   return (
     <button
       type="button"
       title={chipLabel(event)}
       onClick={() => onPeek?.(event)}
-      className="w-full truncate rounded bg-secondary px-1.5 py-0.5 text-left text-xs text-secondary-foreground hover:bg-secondary/80 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      style={
+        colored
+          ? { borderLeftColor: event.color, backgroundColor: `${event.color}1a` }
+          : undefined
+      }
+      className={cn(
+        "w-full truncate rounded px-1.5 py-0.5 text-left text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+        colored
+          ? "border-l-[3px] text-foreground hover:opacity-80"
+          : "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+      )}
     >
       {chipLabel(event)}
     </button>
