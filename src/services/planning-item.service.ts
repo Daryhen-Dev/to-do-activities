@@ -8,6 +8,7 @@ import {
   findOverlappingTimedItem,
   findOwnedPlanningItem,
   listDueReminders,
+  listNotesByUser,
   listPlanningItemsByUser,
   listRemindersForUser,
   listScheduledItemsByCategory,
@@ -17,6 +18,7 @@ import {
   updatePlanningItem,
 } from "../repositories/planning-item.repository";
 import type { ScheduledItemWithCategory } from "../lib/calendar";
+import type { NoteWithCategory } from "../lib/notes";
 import { findOwnedList } from "../repositories/list.repository";
 import { findOwnedCategory } from "../repositories/category.repository";
 import type {
@@ -179,6 +181,18 @@ export async function listRemindersForCurrentUserRange(
 ): Promise<ScheduledItemWithCategory[]> {
   const userId = await getCurrentUserId();
   return listRemindersForUser(userId, from, to);
+}
+
+/**
+ * The current user's notes (item type `nota`), each enriched with its owning
+ * category (the section) — the data source for the Notes view. Resolves the
+ * acting user server-side (authoritative ownership). Note create/update/delete
+ * reuse the generic planning-item service functions; only this read is
+ * notes-specific.
+ */
+export async function listNotesForCurrentUser(): Promise<NoteWithCategory[]> {
+  const userId = await getCurrentUserId();
+  return listNotesByUser(userId);
 }
 
 /**

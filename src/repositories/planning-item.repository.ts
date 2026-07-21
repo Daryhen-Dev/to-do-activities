@@ -2,6 +2,7 @@ import { Prisma, type PlanningItem } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { NotFoundError } from "../lib/errors";
 import type { ScheduledItemWithCategory } from "../lib/calendar";
+import type { NoteWithCategory } from "../lib/notes";
 
 /**
  * Sole Prisma import boundary for the planning-item vertical slice. No
@@ -243,6 +244,45 @@ export async function listRemindersForUser(
       },
     },
     orderBy: [{ remindAt: "asc" }, { createdAt: "asc" }],
+  });
+
+  return rows.map(({ list, ...item }) => ({
+    ...item,
+    categoryId: list.category.id,
+    categoryName: list.category.name,
+    categoryColor: list.category.color,
+  }));
+}
+
+/**
+ * The user's notes (item type `nota`) that are live (not deleted, not archived),
+ * each enriched with its owning category (the section) — the data source for the
+ * Notes view. Filters by the item-type KEY (`nota`) rather than a hard-coded id,
+ * joins `List → Category`, and flattens to `NoteWithCategory` so no Prisma
+ * relation shape leaks past this layer. Ordered newest-first (`updatedAt desc`).
+ */
+export async function listNotesByUser(
+  userId: string,
+): Promise<NoteWithCategory[]> {
+  const rows = await prisma.planningItem.findMany({
+    where: {
+      userId,
+      deletedAt: null,
+      archived: false,
+      itemType: { key: "nota" },
+      list: {
+        deletedAt: null,
+        category: { userId, deletedAt: null },
+      },
+    },
+    include: {
+      list: {
+        select: {
+          category: { select: { id: true, name: true, color: true } },
+        },
+      },
+    },
+    orderBy: { updatedAt: "desc" },
   });
 
   return rows.map(({ list, ...item }) => ({

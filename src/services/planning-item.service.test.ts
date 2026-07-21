@@ -17,6 +17,7 @@ vi.mock("../repositories/planning-item.repository", () => ({
   findOverlappingTimedItem: vi.fn(),
   findOwnedPlanningItem: vi.fn(),
   listDueReminders: vi.fn(),
+  listNotesByUser: vi.fn(),
   listPlanningItemsByUser: vi.fn(),
   listRemindersForUser: vi.fn(),
   listScheduledItemsByCategory: vi.fn(),
@@ -47,6 +48,7 @@ import {
   findOverlappingTimedItem,
   findOwnedPlanningItem,
   listDueReminders,
+  listNotesByUser,
   listPlanningItemsByUser,
   listRemindersForUser,
   listScheduledItemsByCategory,
@@ -61,6 +63,7 @@ import {
   deletePlanningItemForCurrentUser,
   getPlanningItemForCurrentUser,
   listDueRemindersForCurrentUser,
+  listNotesForCurrentUser,
   listPlanningItemsForCurrentUser,
   listRemindersForCurrentUserRange,
   listScheduledItemsForCategory,
@@ -83,6 +86,7 @@ const mockFindOverlap = vi.mocked(findOverlappingTimedItem);
 const mockListDueReminders = vi.mocked(listDueReminders);
 const mockMarkReminderSeen = vi.mocked(markReminderSeen);
 const mockListRemindersForUser = vi.mocked(listRemindersForUser);
+const mockListNotesByUser = vi.mocked(listNotesByUser);
 
 const ownedList = { id: "list-1" } as List;
 
@@ -472,6 +476,26 @@ describe("listRemindersForCurrentUserRange", () => {
     await listRemindersForCurrentUserRange(from, to);
 
     expect(mockFindOwnedCategory).not.toHaveBeenCalled();
+  });
+});
+
+describe("listNotesForCurrentUser", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("delegates to the repository with the resolved current user", async () => {
+    const notes = [
+      { id: "n-1", categoryId: "cat-1" },
+      { id: "n-2", categoryId: "cat-2" },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ] as any as Awaited<ReturnType<typeof listNotesByUser>>;
+    mockListNotesByUser.mockResolvedValue(notes);
+
+    const result = await listNotesForCurrentUser();
+
+    expect(mockListNotesByUser).toHaveBeenCalledWith(DEV_USER_ID);
+    expect(result).toBe(notes);
   });
 });
 

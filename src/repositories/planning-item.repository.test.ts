@@ -8,6 +8,7 @@ import {
   findOverlappingTimedItem,
   findOwnedPlanningItem,
   listDueReminders,
+  listNotesByUser,
   listPlanningItemsByUser,
   listRemindersForUser,
   listScheduledItemsByCategory,
@@ -553,6 +554,114 @@ describe("planning-item repository (integration)", () => {
     expect(reminders.map((item) => item.id)).not.toContain(
       strangersReminder.id,
     );
+  });
+
+  it("listNotesByUser returns only live nota-type items with category, excluding tasks/deleted/archived/other users", async () => {
+    const notaType = await prisma.itemType.findUniqueOrThrow({
+      where: { key: "nota" },
+    });
+
+    // INCLUDED: two notes (assert newest-first ordering by updatedAt).
+    const olderNote = await createPlanningItem({
+      userId: DEV_USER_ID,
+      title: "older note",
+      description: "first",
+      listId,
+      itemTypeId: notaType.id,
+      priorityId: null,
+      statusId,
+      dueAt: null,
+    });
+    createdItemIds.push(olderNote.id);
+    const newerNote = await createPlanningItem({
+      userId: DEV_USER_ID,
+      title: "newer note",
+      description: "second",
+      listId,
+      itemTypeId: notaType.id,
+      priorityId: null,
+      statusId,
+      dueAt: null,
+    });
+    createdItemIds.push(newerNote.id);
+    // Bump the older note's updatedAt so the newer-created one is not trivially
+    // first; then re-touch the newer so it is the most recent.
+    await updatePlanningItem(olderNote.id, { title: "older note" });
+    await updatePlanningItem(newerNote.id, { title: "newer note" });
+
+    // EXCLUDED: a task (non-nota) under the same list.
+    const task = await createPlanningItem({
+      userId: DEV_USER_ID,
+      title: "a task, not a note",
+      description: null,
+      listId,
+      itemTypeId,
+      priorityId: null,
+      statusId,
+      dueAt: null,
+    });
+    createdItemIds.push(task.id);
+
+    // EXCLUDED: a deleted note.
+    const deletedNote = await createPlanningItem({
+      userId: DEV_USER_ID,
+      title: "deleted note",
+      description: null,
+      listId,
+      itemTypeId: notaType.id,
+      priorityId: null,
+      statusId,
+      dueAt: null,
+    });
+    createdItemIds.push(deletedNote.id);
+    await softDeletePlanningItem(deletedNote.id);
+
+    // EXCLUDED: an archived note.
+    const archivedNote = await createPlanningItem({
+      userId: DEV_USER_ID,
+      title: "archived note",
+      description: null,
+      listId,
+      itemTypeId: notaType.id,
+      priorityId: null,
+      statusId,
+      dueAt: null,
+    });
+    createdItemIds.push(archivedNote.id);
+    await updatePlanningItem(archivedNote.id, { archived: true });
+
+    // EXCLUDED: another user's note.
+    const stranger = await prisma.user.create({
+      data: { email: `note-stranger-${Date.now()}@test.local` },
+    });
+    throwawayUserIds.push(stranger.id);
+    const strangersNote = await prisma.planningItem.create({
+      data: {
+        userId: stranger.id,
+        title: "stranger's note",
+        listId,
+        itemTypeId: notaType.id,
+        statusId,
+      },
+    });
+
+    const notes = await listNotesByUser(DEV_USER_ID);
+    const ids = notes.map((note) => note.id);
+
+    expect(ids).toContain(olderNote.id);
+    expect(ids).toContain(newerNote.id);
+    expect(ids).not.toContain(task.id);
+    expect(ids).not.toContain(deletedNote.id);
+    expect(ids).not.toContain(archivedNote.id);
+    expect(ids).not.toContain(strangersNote.id);
+
+    // Newest-first: newerNote (touched last) precedes olderNote.
+    expect(ids.indexOf(newerNote.id)).toBeLessThan(ids.indexOf(olderNote.id));
+
+    // Enriched with the owning category.
+    const row = notes.find((note) => note.id === newerNote.id);
+    expect(row?.categoryId).toBeDefined();
+    expect(typeof row?.categoryName).toBe("string");
   });
 });
 
