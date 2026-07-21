@@ -309,7 +309,11 @@ export function TaskEditDialog({
                   <Select value={field.value} onValueChange={field.onChange}>
                     <FormControl>
                       <SelectTrigger className="w-full">
-                        <SelectValue />
+                        <SelectValue>
+                          {(value) =>
+                            lists.find((list) => list.id === value)?.name ?? ""
+                          }
+                        </SelectValue>
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
@@ -344,7 +348,15 @@ export function TaskEditDialog({
                   <Select value={field.value} onValueChange={field.onChange}>
                     <FormControl>
                       <SelectTrigger className="w-full">
-                        <SelectValue />
+                        <SelectValue>
+                          {(value) =>
+                            value === NO_PRIORITY
+                              ? "No priority"
+                              : (priorities.find(
+                                  (priority) => priority.id === value,
+                                )?.name ?? "No priority")
+                          }
+                        </SelectValue>
                       </SelectTrigger>
                     </FormControl>
                     <SelectContent>
