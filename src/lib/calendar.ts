@@ -8,7 +8,7 @@ import type { PlanningItem } from "@prisma/client";
  * placed on local calendar days.
  */
 
-export type CalendarView = "month" | "agenda";
+export type CalendarView = "month" | "week" | "day" | "agenda";
 
 /** A scheduled item projected for the calendar (dates parsed from the API). */
 export interface CalendarEvent {
@@ -79,6 +79,19 @@ export function buildMonthGrid(
   return weeks;
 }
 
+/** Local midnight of the week-start day for the week containing `date`. */
+export function startOfWeek(date: Date, weekStartsOn: 0 | 1 = 0): Date {
+  const start = startOfDay(date);
+  const offset = (start.getDay() - weekStartsOn + 7) % 7;
+  return addDays(start, -offset);
+}
+
+/** The 7 local days of `anchor`'s week (week-start aligned). */
+export function buildWeekDays(anchor: Date, weekStartsOn: 0 | 1 = 0): Date[] {
+  const start = startOfWeek(anchor, weekStartsOn);
+  return Array.from({ length: 7 }, (_, i) => addDays(start, i));
+}
+
 /**
  * The `[from, to)` window the calendar needs data for. Month view spans the
  * full grid (so leading/trailing days show their events); agenda spans from the
@@ -92,6 +105,14 @@ export function rangeFor(
   if (view === "agenda") {
     const from = startOfDay(anchor);
     return { from, to: addDays(from, AGENDA_DAYS) };
+  }
+  if (view === "day") {
+    const from = startOfDay(anchor);
+    return { from, to: addDays(from, 1) };
+  }
+  if (view === "week") {
+    const from = startOfWeek(anchor);
+    return { from, to: addDays(from, 7) };
   }
   const weeks = buildMonthGrid(anchor);
   const from = weeks[0][0];
@@ -168,4 +189,122 @@ export function toCalendarEvents(rows: PlanningItem[]): CalendarEvent[] {
     });
   }
   return events;
+}
+
+/** Minutes in a day; timed events are positioned within `[0, 1440]`. */
+export const MINUTES_PER_DAY = 1440;
+
+/** Minimum rendered block length so very short events stay clickable. */
+export const MIN_EVENT_MINUTES = 30;
+
+/** A timed event positioned within a single day's hour grid. */
+export interface PositionedEvent {
+  event: CalendarEvent;
+  /** Minutes from local midnight, clamped to [0, 1440]. */
+  startMin: number;
+  /** End minutes; always `> startMin` (min duration enforced). */
+  endMin: number;
+  /** 0-based overlap lane within the event's cluster. */
+  lane: number;
+  /** Total lanes in the event's overlap cluster. */
+  lanes: number;
+}
+
+/** A day's events split into an all-day strip and laid-out timed blocks. */
+export interface DayLayout {
+  allDay: CalendarEvent[];
+  timed: PositionedEvent[];
+}
+
+function clampMinute(value: number): number {
+  return Math.max(0, Math.min(MINUTES_PER_DAY, value));
+}
+
+/**
+ * Splits `day`'s events into an all-day strip and a laid-out set of timed
+ * blocks. Timed events are clamped to the day's `[0, 1440]` bounds, given a
+ * minimum height, and assigned side-by-side lanes so overlapping events stay
+ * visible: events are grouped into clusters of mutual overlap, and within a
+ * cluster each event takes the first lane whose previous event already ended;
+ * `lanes` is the cluster's peak concurrency.
+ */
+export function layoutDayEvents(
+  events: CalendarEvent[],
+  day: Date,
+): DayLayout {
+  const dayStart = startOfDay(day).getTime();
+  const dayEnd = dayStart + MINUTES_PER_DAY * 60_000;
+
+  const allDay: CalendarEvent[] = [];
+  const intervals: { event: CalendarEvent; startMin: number; endMin: number }[] =
+    [];
+
+  for (const event of events) {
+    if (event.allDay) {
+      // Only strip events that actually touch this day.
+      const s = event.startAt.getTime();
+      const e = (event.endAt ?? event.startAt).getTime();
+      if (s < dayEnd && e >= dayStart) allDay.push(event);
+      continue;
+    }
+
+    const startMs = event.startAt.getTime();
+    const endMs = (event.endAt ?? event.startAt).getTime();
+    // Timed membership: intersects the day, or is a point within the day.
+    const intersects = startMs < dayEnd && endMs > dayStart;
+    const pointInDay = startMs >= dayStart && startMs < dayEnd;
+    if (!intersects && !pointInDay) continue;
+
+    let startMin = clampMinute(Math.round((startMs - dayStart) / 60_000));
+    let endMin = clampMinute(Math.round((endMs - dayStart) / 60_000));
+    if (endMin - startMin < MIN_EVENT_MINUTES) {
+      endMin = Math.min(startMin + MIN_EVENT_MINUTES, MINUTES_PER_DAY);
+      if (endMin - startMin < MIN_EVENT_MINUTES) {
+        startMin = Math.max(endMin - MIN_EVENT_MINUTES, 0);
+      }
+    }
+    intervals.push({ event, startMin, endMin });
+  }
+
+  intervals.sort((a, b) => a.startMin - b.startMin || a.endMin - b.endMin);
+
+  const timed: PositionedEvent[] = [];
+  let cluster: { event: CalendarEvent; startMin: number; endMin: number }[] = [];
+  let clusterEnd = -1;
+
+  const flush = () => {
+    if (cluster.length === 0) return;
+    const laneEnds: number[] = [];
+    const withLane = cluster.map((iv) => {
+      let lane = laneEnds.findIndex((end) => end <= iv.startMin);
+      if (lane === -1) {
+        lane = laneEnds.length;
+        laneEnds.push(iv.endMin);
+      } else {
+        laneEnds[lane] = iv.endMin;
+      }
+      return { ...iv, lane };
+    });
+    const lanes = laneEnds.length;
+    for (const w of withLane) {
+      timed.push({
+        event: w.event,
+        startMin: w.startMin,
+        endMin: w.endMin,
+        lane: w.lane,
+        lanes,
+      });
+    }
+    cluster = [];
+    clusterEnd = -1;
+  };
+
+  for (const iv of intervals) {
+    if (cluster.length > 0 && iv.startMin >= clusterEnd) flush();
+    cluster.push(iv);
+    clusterEnd = Math.max(clusterEnd, iv.endMin);
+  }
+  flush();
+
+  return { allDay, timed };
 }

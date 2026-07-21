@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import {
   buildMonthGrid,
+  buildWeekDays,
   type CalendarEvent,
   groupEventsByDay,
   isSameDay,
@@ -18,6 +19,7 @@ import { DetailSheet } from "@/components/ui/detail-sheet";
 import { AgendaList } from "./agenda-list";
 import { CalendarToolbar } from "./calendar-toolbar";
 import { MonthGrid } from "./month-grid";
+import { TimeGrid } from "./time-grid";
 
 /**
  * Container for a single category's calendar. Owns event data fetching for the
@@ -102,6 +104,7 @@ export function CategoryCalendar({
   }, [categoryId, fromIso, toIso]);
 
   const weeks = useMemo(() => buildMonthGrid(anchorDate), [anchorDate]);
+  const weekDays = useMemo(() => buildWeekDays(anchorDate), [anchorDate]);
   const groups = useMemo(
     () => groupEventsByDay(events, new Date(fromIso)),
     [events, fromIso],
@@ -129,6 +132,14 @@ export function CategoryCalendar({
             anchorMonth={anchorDate.getMonth()}
             onPeek={setPeekEvent}
           />
+        </div>
+      ) : view === "week" ? (
+        <div className="min-h-0 flex-1">
+          <TimeGrid days={weekDays} events={events} onPeek={setPeekEvent} />
+        </div>
+      ) : view === "day" ? (
+        <div className="min-h-0 flex-1">
+          <TimeGrid days={[anchorDate]} events={events} onPeek={setPeekEvent} />
         </div>
       ) : (
         <AgendaList groups={groups} />

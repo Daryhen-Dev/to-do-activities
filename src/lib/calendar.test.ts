@@ -2,10 +2,15 @@ import { describe, expect, it } from "vitest";
 import type { PlanningItem } from "@prisma/client";
 import {
   buildMonthGrid,
+  buildWeekDays,
   eventsOnDay,
   groupEventsByDay,
   isSameDay,
+  layoutDayEvents,
+  MIN_EVENT_MINUTES,
+  MINUTES_PER_DAY,
   rangeFor,
+  startOfWeek,
   toCalendarEvents,
   type CalendarEvent,
 } from "./calendar";
@@ -318,5 +323,293 @@ describe("toCalendarEvents", () => {
 
     const events = toCalendarEvents(rows);
     expect(events[0].allDay).toBe(true);
+  });
+});
+
+describe("startOfWeek / buildWeekDays", () => {
+  it("returns exactly 7 consecutive local days", () => {
+    const days = buildWeekDays(new Date(2026, 6, 15, 14, 30));
+    expect(days).toHaveLength(7);
+    for (let i = 1; i < days.length; i += 1) {
+      const prev = days[i - 1];
+      const expectedNext = new Date(
+        prev.getFullYear(),
+        prev.getMonth(),
+        prev.getDate() + 1,
+      );
+      expect(isSameDay(days[i], expectedNext)).toBe(true);
+    }
+  });
+
+  it("starts on Sunday when weekStartsOn=0", () => {
+    const days = buildWeekDays(new Date(2026, 6, 15), 0); // Wed Jul 15 2026
+    expect(days[0].getDay()).toBe(0);
+    // Every day thereafter is +1.
+    for (let i = 1; i < days.length; i += 1) {
+      const prev = days[i - 1];
+      expect(
+        isSameDay(
+          days[i],
+          new Date(prev.getFullYear(), prev.getMonth(), prev.getDate() + 1),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("starts on Monday when weekStartsOn=1", () => {
+    const days = buildWeekDays(new Date(2026, 6, 15), 1);
+    expect(days[0].getDay()).toBe(1);
+    expect(days).toHaveLength(7);
+  });
+
+  it("works across a month boundary", () => {
+    // Aug 1 2026 is a Saturday; the week (Sun-start) spans Jul 26 -> Aug 1.
+    const days = buildWeekDays(new Date(2026, 7, 1), 0);
+    expect(days).toHaveLength(7);
+    expect(isSameDay(days[0], new Date(2026, 6, 26))).toBe(true); // Sun Jul 26
+    expect(isSameDay(days[6], new Date(2026, 7, 1))).toBe(true); // Sat Aug 1
+    // Days remain contiguous across the month change.
+    for (let i = 1; i < days.length; i += 1) {
+      const prev = days[i - 1];
+      expect(
+        isSameDay(
+          days[i],
+          new Date(prev.getFullYear(), prev.getMonth(), prev.getDate() + 1),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("works across a year boundary (Dec -> Jan)", () => {
+    // Jan 1 2027 is a Friday; the week (Sun-start) spans Dec 27 2026 -> Jan 2 2027.
+    const days = buildWeekDays(new Date(2027, 0, 1), 0);
+    expect(days).toHaveLength(7);
+    expect(isSameDay(days[0], new Date(2026, 11, 27))).toBe(true); // Sun Dec 27 2026
+    expect(isSameDay(days[6], new Date(2027, 0, 2))).toBe(true); // Sat Jan 2 2027
+    for (let i = 1; i < days.length; i += 1) {
+      const prev = days[i - 1];
+      expect(
+        isSameDay(
+          days[i],
+          new Date(prev.getFullYear(), prev.getMonth(), prev.getDate() + 1),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("returns local midnight of the week-start day", () => {
+    const start = startOfWeek(new Date(2026, 6, 15, 14, 37)); // Wed Jul 15
+    expect(start.getDay()).toBe(0); // Sunday
+    expect(start.getHours()).toBe(0);
+    expect(start.getMinutes()).toBe(0);
+    expect(start.getSeconds()).toBe(0);
+    expect(start.getMilliseconds()).toBe(0);
+    expect(isSameDay(start, new Date(2026, 6, 12))).toBe(true); // Sun Jul 12
+  });
+
+  it("startOfWeek matches buildWeekDays' first day", () => {
+    const anchor = new Date(2026, 6, 15, 9, 0);
+    expect(startOfWeek(anchor, 1).getTime()).toBe(buildWeekDays(anchor, 1)[0].getTime());
+  });
+});
+
+describe("rangeFor week/day", () => {
+  it("day: from = start of the anchor's local day, to = +1 day", () => {
+    const anchor = new Date(2026, 6, 15, 14, 37);
+    const { from, to } = rangeFor("day", anchor);
+
+    const startOfAnchorDay = new Date(2026, 6, 15);
+    const nextDay = new Date(2026, 6, 16);
+
+    expect(from.getTime()).toBe(startOfAnchorDay.getTime());
+    expect(from.getHours()).toBe(0);
+    expect(from.getMinutes()).toBe(0);
+    expect(isSameDay(to, nextDay)).toBe(true);
+    expect(from.getTime()).toBeLessThan(to.getTime());
+  });
+
+  it("week: from = startOfWeek(anchor), to = +7 days", () => {
+    const anchor = new Date(2026, 6, 15, 14, 37);
+    const { from, to } = rangeFor("week", anchor);
+
+    const weekStart = startOfWeek(anchor);
+    const weekEnd = new Date(
+      weekStart.getFullYear(),
+      weekStart.getMonth(),
+      weekStart.getDate() + 7,
+    );
+
+    expect(from.getTime()).toBe(weekStart.getTime());
+    expect(to.getTime()).toBe(weekEnd.getTime());
+    expect(from.getTime()).toBeLessThan(to.getTime());
+  });
+});
+
+describe("layoutDayEvents", () => {
+  const day = new Date(2026, 6, 15);
+
+  it("routes all-day events to allDay and never to timed", () => {
+    const allDayEvent = makeEvent({
+      id: "holiday",
+      startAt: new Date(2026, 6, 15, 0, 0),
+      allDay: true,
+    });
+    const { allDay, timed } = layoutDayEvents([allDayEvent], day);
+
+    expect(allDay).toEqual([allDayEvent]);
+    expect(timed).toHaveLength(0);
+  });
+
+  it("routes a timed event to timed and never to allDay", () => {
+    const timedEvent = makeEvent({
+      id: "meeting",
+      startAt: new Date(2026, 6, 15, 9, 0),
+      endAt: new Date(2026, 6, 15, 10, 0),
+    });
+    const { allDay, timed } = layoutDayEvents([timedEvent], day);
+
+    expect(allDay).toHaveLength(0);
+    expect(timed).toHaveLength(1);
+    expect(timed[0].event).toBe(timedEvent);
+  });
+
+  it("clamps an event spilling in from the previous day to startMin = 0", () => {
+    const spillIn = makeEvent({
+      id: "spill-in",
+      startAt: new Date(2026, 6, 14, 23, 0), // previous day 23:00
+      endAt: new Date(2026, 6, 15, 1, 0), // this day 01:00
+    });
+    const { timed } = layoutDayEvents([spillIn], day);
+
+    expect(timed).toHaveLength(1);
+    expect(timed[0].startMin).toBe(0);
+    expect(timed[0].endMin).toBe(60);
+    expect(timed[0].startMin).toBeGreaterThanOrEqual(0);
+    expect(timed[0].endMin).toBeLessThanOrEqual(MINUTES_PER_DAY);
+  });
+
+  it("clamps an event running past midnight to endMin = 1440", () => {
+    const spillOut = makeEvent({
+      id: "spill-out",
+      startAt: new Date(2026, 6, 15, 23, 0), // this day 23:00
+      endAt: new Date(2026, 6, 16, 1, 0), // next day 01:00
+    });
+    const { timed } = layoutDayEvents([spillOut], day);
+
+    expect(timed).toHaveLength(1);
+    expect(timed[0].startMin).toBe(23 * 60);
+    expect(timed[0].endMin).toBe(MINUTES_PER_DAY);
+    expect(timed[0].startMin).toBeGreaterThanOrEqual(0);
+    expect(timed[0].endMin).toBeLessThanOrEqual(MINUTES_PER_DAY);
+  });
+
+  it("enforces MIN_EVENT_MINUTES when endAt is missing", () => {
+    const point = makeEvent({
+      id: "point",
+      startAt: new Date(2026, 6, 15, 9, 0),
+      endAt: null,
+    });
+    const { timed } = layoutDayEvents([point], day);
+
+    expect(timed).toHaveLength(1);
+    expect(timed[0].endMin - timed[0].startMin).toBe(MIN_EVENT_MINUTES);
+  });
+
+  it("enforces MIN_EVENT_MINUTES for a tiny (zero-length) duration", () => {
+    const tiny = makeEvent({
+      id: "tiny",
+      startAt: new Date(2026, 6, 15, 9, 0),
+      endAt: new Date(2026, 6, 15, 9, 0), // zero duration
+    });
+    const { timed } = layoutDayEvents([tiny], day);
+
+    expect(timed).toHaveLength(1);
+    expect(timed[0].endMin - timed[0].startMin).toBe(MIN_EVENT_MINUTES);
+  });
+
+  it("assigns lane 0 and lanes 1 to non-overlapping events", () => {
+    const a = makeEvent({
+      id: "a",
+      startAt: new Date(2026, 6, 15, 9, 0),
+      endAt: new Date(2026, 6, 15, 10, 0),
+    });
+    const b = makeEvent({
+      id: "b",
+      startAt: new Date(2026, 6, 15, 11, 0),
+      endAt: new Date(2026, 6, 15, 12, 0),
+    });
+    const { timed } = layoutDayEvents([a, b], day);
+
+    expect(timed).toHaveLength(2);
+    for (const positioned of timed) {
+      expect(positioned.lane).toBe(0);
+      expect(positioned.lanes).toBe(1);
+    }
+  });
+
+  it("assigns distinct lanes 0..N-1 and lanes = N to N mutually-overlapping events", () => {
+    const a = makeEvent({
+      id: "a",
+      startAt: new Date(2026, 6, 15, 9, 0),
+      endAt: new Date(2026, 6, 15, 12, 0),
+    });
+    const b = makeEvent({
+      id: "b",
+      startAt: new Date(2026, 6, 15, 9, 30),
+      endAt: new Date(2026, 6, 15, 12, 0),
+    });
+    const c = makeEvent({
+      id: "c",
+      startAt: new Date(2026, 6, 15, 10, 0),
+      endAt: new Date(2026, 6, 15, 12, 0),
+    });
+    const { timed } = layoutDayEvents([a, b, c], day);
+
+    expect(timed).toHaveLength(3);
+    for (const positioned of timed) {
+      expect(positioned.lanes).toBe(3);
+    }
+    const lanes = timed.map((t) => t.lane).sort((x, y) => x - y);
+    expect(lanes).toEqual([0, 1, 2]);
+  });
+
+  it("keeps overlapping pairs in different lanes for a partial-overlap set", () => {
+    // A 9-10, B 9:30-11, C 10:30-12 — all one cluster (chained overlaps).
+    const a = makeEvent({
+      id: "a",
+      startAt: new Date(2026, 6, 15, 9, 0),
+      endAt: new Date(2026, 6, 15, 10, 0),
+    });
+    const b = makeEvent({
+      id: "b",
+      startAt: new Date(2026, 6, 15, 9, 30),
+      endAt: new Date(2026, 6, 15, 11, 0),
+    });
+    const c = makeEvent({
+      id: "c",
+      startAt: new Date(2026, 6, 15, 10, 30),
+      endAt: new Date(2026, 6, 15, 12, 0),
+    });
+    const { timed } = layoutDayEvents([a, b, c], day);
+
+    expect(timed).toHaveLength(3);
+
+    // Every event sits within a valid lane index.
+    for (const positioned of timed) {
+      expect(positioned.lane).toBeGreaterThanOrEqual(0);
+      expect(positioned.lane).toBeLessThan(positioned.lanes);
+    }
+
+    // Overlapping pairs must not share a lane.
+    const overlaps = (x: PositionedLike, y: PositionedLike) =>
+      x.startMin < y.endMin && y.startMin < x.endMin;
+    type PositionedLike = { startMin: number; endMin: number; lane: number };
+    for (let i = 0; i < timed.length; i += 1) {
+      for (let j = i + 1; j < timed.length; j += 1) {
+        if (overlaps(timed[i], timed[j])) {
+          expect(timed[i].lane).not.toBe(timed[j].lane);
+        }
+      }
+    }
   });
 });
