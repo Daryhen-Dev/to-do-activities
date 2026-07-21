@@ -5,6 +5,7 @@ import {
   createPlanningItem,
   findDefaultItemTypeId,
   findDefaultStatusId,
+  findOverlappingTimedItem,
   findOwnedPlanningItem,
   listPlanningItemsByUser,
   listScheduledItemsByCategory,
@@ -30,6 +31,33 @@ function validateSchedule(startAt: Date | null, endAt: Date | null): void {
   }
   if (startAt && endAt && endAt < startAt) {
     throw new ValidationError("endAt must be on or after startAt");
+  }
+}
+
+/**
+ * Enforces the "no double-booking" rule: a TIMED (non-all-day) item may not
+ * overlap another of the user's timed items, across all categories. All-day
+ * items and unscheduled items are exempt. `excludeId` skips the item being
+ * updated. Boundaries that merely touch do not conflict.
+ */
+async function assertNoTimedOverlap(
+  userId: string,
+  startAt: Date | null,
+  endAt: Date | null,
+  allDay: boolean,
+  excludeId?: string,
+): Promise<void> {
+  if (!startAt || allDay) return;
+  const conflict = await findOverlappingTimedItem(
+    userId,
+    startAt,
+    endAt ?? startAt,
+    excludeId,
+  );
+  if (conflict) {
+    throw new ValidationError(
+      "This activity overlaps another scheduled activity.",
+    );
   }
 }
 
@@ -72,6 +100,7 @@ export async function createPlanningItemForCurrentUser(
   const startAt = input.startAt ?? null;
   const endAt = input.endAt ?? null;
   validateSchedule(startAt, endAt);
+  await assertNoTimedOverlap(userId, startAt, endAt, input.allDay ?? false);
 
   return createPlanningItem({
     userId,
@@ -165,6 +194,16 @@ export async function updatePlanningItemForCurrentUser(
     effectiveEndAt = null;
   }
   validateSchedule(effectiveStartAt, effectiveEndAt);
+
+  const effectiveAllDay =
+    input.allDay !== undefined ? input.allDay : existing.allDay;
+  await assertNoTimedOverlap(
+    userId,
+    effectiveStartAt,
+    effectiveEndAt,
+    effectiveAllDay,
+    id,
+  );
 
   // When clearing the start unschedules the item, persist the end clear even
   // if the payload did not mention `endAt`.

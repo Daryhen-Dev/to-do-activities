@@ -5,6 +5,7 @@ import {
   createPlanningItem,
   findDefaultItemTypeId,
   findDefaultStatusId,
+  findOverlappingTimedItem,
   findOwnedPlanningItem,
   listPlanningItemsByUser,
   listScheduledItemsByCategory,
@@ -460,5 +461,160 @@ describe("listScheduledItemsByCategory (integration)", () => {
     expect(ids.indexOf(crossingBoundary.id)).toBeLessThan(
       ids.indexOf(inRange.id),
     );
+  });
+});
+
+/**
+ * Integration tests for the "no double-booking" overlap query. Provisions a
+ * throwaway list under a STABLE seeded category owned by the dev user in
+ * `beforeAll` (mirrors the calendar suite: referencing a fixed seeded category
+ * — never creating/deleting one — keeps the shared DB deterministic). Each
+ * scenario seeds its timed items in a DISTINCT time slot so accumulated rows
+ * from earlier assertions never cross-contaminate later ones (the query is
+ * scoped to the whole user across categories). Every row created here is
+ * removed in `afterAll`.
+ */
+describe("findOverlappingTimedItem (integration)", () => {
+  let itemTypeId: string;
+  let statusId: string;
+  let listId: string;
+  const createdItemIds: string[] = [];
+
+  // Stable seeded category (fixed id from `seed.ts`) — see the calendar suite's
+  // note on why we reference a seeded category instead of creating one.
+  const categoryId = "dev-cat-trabajo";
+
+  beforeAll(async () => {
+    const itemType = await prisma.itemType.findFirstOrThrow({
+      where: { isDefault: true },
+    });
+    const status = await prisma.status.findFirstOrThrow({
+      where: { isDefault: true },
+    });
+    itemTypeId = itemType.id;
+    statusId = status.id;
+
+    const list = await prisma.list.create({
+      data: { categoryId, name: `overlap-test-list-${Date.now()}` },
+    });
+    listId = list.id;
+  });
+
+  afterAll(async () => {
+    if (createdItemIds.length > 0) {
+      await prisma.planningItem.deleteMany({
+        where: { id: { in: createdItemIds } },
+      });
+    }
+    if (listId) {
+      await prisma.list.deleteMany({ where: { id: listId } });
+    }
+  });
+
+  async function seedTimedItem(data: {
+    title: string;
+    startAt: Date | null;
+    endAt?: Date | null;
+    allDay?: boolean;
+    deletedAt?: Date | null;
+  }) {
+    const item = await prisma.planningItem.create({
+      data: {
+        userId: DEV_USER_ID,
+        title: data.title,
+        listId,
+        itemTypeId,
+        statusId,
+        startAt: data.startAt,
+        endAt: data.endAt ?? null,
+        allDay: data.allDay ?? false,
+        deletedAt: data.deletedAt ?? null,
+      },
+    });
+    createdItemIds.push(item.id);
+    return item;
+  }
+
+  it("returns the existing item when the query interval overlaps it", async () => {
+    const existing = await seedTimedItem({
+      title: "overlap: existing 10:00-11:00",
+      startAt: new Date("2026-06-15T10:00:00Z"),
+      endAt: new Date("2026-06-15T11:00:00Z"),
+    });
+
+    const conflict = await findOverlappingTimedItem(
+      DEV_USER_ID,
+      new Date("2026-06-15T10:30:00Z"),
+      new Date("2026-06-15T11:30:00Z"),
+    );
+
+    expect(conflict?.id).toBe(existing.id);
+  });
+
+  it("returns null when the query only touches an existing item's boundary", async () => {
+    await seedTimedItem({
+      title: "overlap: existing 14:00-15:00 (boundary)",
+      startAt: new Date("2026-06-15T14:00:00Z"),
+      endAt: new Date("2026-06-15T15:00:00Z"),
+    });
+
+    const conflict = await findOverlappingTimedItem(
+      DEV_USER_ID,
+      new Date("2026-06-15T15:00:00Z"),
+      new Date("2026-06-15T16:00:00Z"),
+    );
+
+    expect(conflict).toBeNull();
+  });
+
+  it("ignores an all-day item that would otherwise overlap the query", async () => {
+    await seedTimedItem({
+      title: "overlap: all-day on 2026-06-16",
+      startAt: new Date("2026-06-16T00:00:00Z"),
+      endAt: new Date("2026-06-17T00:00:00Z"),
+      allDay: true,
+    });
+
+    const conflict = await findOverlappingTimedItem(
+      DEV_USER_ID,
+      new Date("2026-06-16T08:00:00Z"),
+      new Date("2026-06-16T09:00:00Z"),
+    );
+
+    expect(conflict).toBeNull();
+  });
+
+  it("skips the item named by excludeId so it never conflicts with itself", async () => {
+    const self = await seedTimedItem({
+      title: "overlap: excludeId self 2026-06-17 09:00-10:00",
+      startAt: new Date("2026-06-17T09:00:00Z"),
+      endAt: new Date("2026-06-17T10:00:00Z"),
+    });
+
+    const conflict = await findOverlappingTimedItem(
+      DEV_USER_ID,
+      new Date("2026-06-17T09:15:00Z"),
+      new Date("2026-06-17T09:45:00Z"),
+      self.id,
+    );
+
+    expect(conflict).toBeNull();
+  });
+
+  it("ignores a soft-deleted item that would otherwise overlap the query", async () => {
+    await seedTimedItem({
+      title: "overlap: soft-deleted 2026-06-18 09:00-10:00",
+      startAt: new Date("2026-06-18T09:00:00Z"),
+      endAt: new Date("2026-06-18T10:00:00Z"),
+      deletedAt: new Date(),
+    });
+
+    const conflict = await findOverlappingTimedItem(
+      DEV_USER_ID,
+      new Date("2026-06-18T09:30:00Z"),
+      new Date("2026-06-18T10:30:00Z"),
+    );
+
+    expect(conflict).toBeNull();
   });
 });

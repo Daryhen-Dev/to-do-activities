@@ -13,6 +13,7 @@ vi.mock("../repositories/planning-item.repository", () => ({
   createPlanningItem: vi.fn(),
   findDefaultItemTypeId: vi.fn(),
   findDefaultStatusId: vi.fn(),
+  findOverlappingTimedItem: vi.fn(),
   findOwnedPlanningItem: vi.fn(),
   listPlanningItemsByUser: vi.fn(),
   listScheduledItemsByCategory: vi.fn(),
@@ -38,6 +39,7 @@ import {
   createPlanningItem,
   findDefaultItemTypeId,
   findDefaultStatusId,
+  findOverlappingTimedItem,
   findOwnedPlanningItem,
   listPlanningItemsByUser,
   listScheduledItemsByCategory,
@@ -63,8 +65,19 @@ const mockUpdate = vi.mocked(updatePlanningItem);
 const mockFindOwnedList = vi.mocked(findOwnedList);
 const mockListScheduledByCategory = vi.mocked(listScheduledItemsByCategory);
 const mockFindOwnedCategory = vi.mocked(findOwnedCategory);
+const mockFindOverlap = vi.mocked(findOverlappingTimedItem);
 
 const ownedList = { id: "list-1" } as List;
+
+// The "no double-booking" precheck runs on every create/update of a TIMED
+// item. Default it to "no conflict" here so the existing schedule tests (which
+// don't care about overlap) keep passing; individual tests override it when
+// they exercise the overlap rule. This runs BEFORE each describe's
+// `vi.clearAllMocks()` (outer hooks fire first), and clearAllMocks only clears
+// call history — not the implementation — so the default survives.
+beforeEach(() => {
+  vi.mocked(findOverlappingTimedItem).mockResolvedValue(null);
+});
 
 describe("createPlanningItemForCurrentUser", () => {
   beforeEach(() => {
@@ -232,6 +245,66 @@ describe("createPlanningItemForCurrentUser", () => {
       }),
     ).rejects.toThrow(ValidationError);
     expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  // No double-booking: a valid, well-formed TIMED schedule that overlaps an
+  // existing timed item is rejected before any write.
+  it("throws ValidationError and never persists when the timed schedule overlaps another item", async () => {
+    mockFindDefaultStatusId.mockResolvedValue("status-default");
+    mockFindDefaultItemTypeId.mockResolvedValue("item-type-default");
+    mockFindOwnedList.mockResolvedValue(ownedList);
+    mockFindOverlap.mockResolvedValue({ id: "conflicting-item" } as PlanningItem);
+
+    await expect(
+      createPlanningItemForCurrentUser({
+        title: "Meeting",
+        listId: "list-1",
+        startAt: new Date("2026-08-01T10:00:00.000Z"),
+        endAt: new Date("2026-08-01T11:00:00.000Z"),
+        allDay: false,
+      }),
+    ).rejects.toThrow(ValidationError);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  // No double-booking exempts all-day items: even with a startAt and an
+  // existing timed item, the overlap check is skipped and the create proceeds.
+  it("does not run the overlap check for an all-day item and persists it", async () => {
+    mockFindDefaultStatusId.mockResolvedValue("status-default");
+    mockFindDefaultItemTypeId.mockResolvedValue("item-type-default");
+    mockFindOwnedList.mockResolvedValue(ownedList);
+    const created = { id: "item-1" } as PlanningItem;
+    mockCreate.mockResolvedValue(created);
+
+    const result = await createPlanningItemForCurrentUser({
+      title: "All-day off-site",
+      listId: "list-1",
+      startAt: new Date("2026-08-01T00:00:00.000Z"),
+      allDay: true,
+    });
+
+    expect(mockFindOverlap).not.toHaveBeenCalled();
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ allDay: true }),
+    );
+    expect(result).toBe(created);
+  });
+
+  // No double-booking exempts unscheduled items: with no startAt there is no
+  // interval to conflict, so the overlap check is skipped entirely.
+  it("does not run the overlap check when the item has no schedule", async () => {
+    mockFindDefaultStatusId.mockResolvedValue("status-default");
+    mockFindDefaultItemTypeId.mockResolvedValue("item-type-default");
+    mockFindOwnedList.mockResolvedValue(ownedList);
+    mockCreate.mockResolvedValue({ id: "item-1" } as PlanningItem);
+
+    await createPlanningItemForCurrentUser({
+      title: "Buy milk",
+      listId: "list-1",
+    });
+
+    expect(mockFindOverlap).not.toHaveBeenCalled();
+    expect(mockCreate).toHaveBeenCalled();
   });
 });
 
@@ -451,6 +524,59 @@ describe("updatePlanningItemForCurrentUser", () => {
       "item-1",
       expect.not.objectContaining({ dueAt: expect.anything() }),
     );
+  });
+
+  // No double-booking on update: a new timed schedule that overlaps another
+  // item is rejected, and the overlap check must exclude the item being
+  // updated (so it never conflicts with itself).
+  it("throws ValidationError and never updates when the new schedule overlaps another item, excluding self", async () => {
+    mockFindOwned.mockResolvedValue({
+      id: "item-1",
+      startAt: new Date("2026-08-01T08:00:00.000Z"),
+      endAt: null,
+      allDay: false,
+    } as PlanningItem);
+    mockFindOverlap.mockResolvedValue({ id: "conflicting-item" } as PlanningItem);
+
+    const startAt = new Date("2026-08-01T10:00:00.000Z");
+    const endAt = new Date("2026-08-01T11:00:00.000Z");
+
+    await expect(
+      updatePlanningItemForCurrentUser("item-1", { startAt, endAt }),
+    ).rejects.toThrow(ValidationError);
+    expect(mockUpdate).not.toHaveBeenCalled();
+    expect(mockFindOverlap).toHaveBeenCalledWith(
+      DEV_USER_ID,
+      startAt,
+      endAt,
+      "item-1",
+    );
+  });
+
+  // No double-booking on update: when the effective schedule does not overlap
+  // (repo returns null) the update proceeds normally.
+  it("proceeds with the update when the new schedule does not overlap another item", async () => {
+    mockFindOwned.mockResolvedValue({
+      id: "item-1",
+      startAt: new Date("2026-08-01T08:00:00.000Z"),
+      endAt: null,
+      allDay: false,
+    } as PlanningItem);
+    mockFindOverlap.mockResolvedValue(null);
+    mockUpdate.mockResolvedValue({ id: "item-1" } as PlanningItem);
+
+    const startAt = new Date("2026-08-01T10:00:00.000Z");
+    const endAt = new Date("2026-08-01T11:00:00.000Z");
+
+    await updatePlanningItemForCurrentUser("item-1", { startAt, endAt });
+
+    expect(mockFindOverlap).toHaveBeenCalledWith(
+      DEV_USER_ID,
+      startAt,
+      endAt,
+      "item-1",
+    );
+    expect(mockUpdate).toHaveBeenCalledWith("item-1", { startAt, endAt });
   });
 });
 

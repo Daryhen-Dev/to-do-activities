@@ -115,6 +115,39 @@ export async function listScheduledItemsByCategory(
 }
 
 /**
+ * The first of the user's TIMED (non-all-day) scheduled items whose interval
+ * overlaps `[start, end)` — it starts before `end` and ends after `start`, so
+ * boundaries that merely touch (e.g. 10–11 and 11–12) do NOT count as a
+ * conflict. `excludeId` skips the item being updated. Returns `null` when there
+ * is no conflict. Scoped to the whole user (across all categories) to enforce
+ * the "no double-booking" rule; all-day items are ignored.
+ *
+ * `end` is the caller's effective end (use `startAt` when the new item has no
+ * `endAt`). An existing item's effective end is `endAt`, or its `startAt` when
+ * `endAt` is null (a point-in-time item).
+ */
+export async function findOverlappingTimedItem(
+  userId: string,
+  start: Date,
+  end: Date,
+  excludeId?: string,
+): Promise<PlanningItem | null> {
+  return prisma.planningItem.findFirst({
+    where: {
+      userId,
+      deletedAt: null,
+      allDay: false,
+      startAt: { not: null, lt: end },
+      OR: [
+        { endAt: { gt: start } },
+        { endAt: null, startAt: { gt: start } },
+      ],
+      ...(excludeId ? { id: { not: excludeId } } : {}),
+    },
+  });
+}
+
+/**
  * A single item owned by `userId`, or `null` if it does not exist, is
  * soft-deleted, or belongs to someone else. Callers (service layer) throw
  * `NotFoundError` on `null` so existence is never leaked via a different
