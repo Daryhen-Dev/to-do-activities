@@ -16,9 +16,11 @@ vi.mock("../repositories/planning-item.repository", () => ({
   findDefaultStatusId: vi.fn(),
   findOverlappingTimedItem: vi.fn(),
   findOwnedPlanningItem: vi.fn(),
+  listDueReminders: vi.fn(),
   listPlanningItemsByUser: vi.fn(),
   listScheduledItemsByCategory: vi.fn(),
   listScheduledItemsForUser: vi.fn(),
+  markReminderSeen: vi.fn(),
   softDeletePlanningItem: vi.fn(),
   updatePlanningItem: vi.fn(),
 }));
@@ -43,16 +45,20 @@ import {
   findDefaultStatusId,
   findOverlappingTimedItem,
   findOwnedPlanningItem,
+  listDueReminders,
   listPlanningItemsByUser,
   listScheduledItemsByCategory,
   listScheduledItemsForUser,
+  markReminderSeen,
   softDeletePlanningItem,
   updatePlanningItem,
 } from "../repositories/planning-item.repository";
 import {
+  acknowledgeReminderForCurrentUser,
   createPlanningItemForCurrentUser,
   deletePlanningItemForCurrentUser,
   getPlanningItemForCurrentUser,
+  listDueRemindersForCurrentUser,
   listPlanningItemsForCurrentUser,
   listScheduledItemsForCategory,
   listScheduledItemsForCurrentUserRange,
@@ -71,6 +77,8 @@ const mockListScheduledByCategory = vi.mocked(listScheduledItemsByCategory);
 const mockListScheduledForUser = vi.mocked(listScheduledItemsForUser);
 const mockFindOwnedCategory = vi.mocked(findOwnedCategory);
 const mockFindOverlap = vi.mocked(findOverlappingTimedItem);
+const mockListDueReminders = vi.mocked(listDueReminders);
+const mockMarkReminderSeen = vi.mocked(markReminderSeen);
 
 const ownedList = { id: "list-1" } as List;
 
@@ -113,6 +121,7 @@ describe("createPlanningItemForCurrentUser", () => {
       startAt: null,
       endAt: null,
       allDay: false,
+      remindAt: null,
     });
     expect(result).toBe(created);
   });
@@ -232,6 +241,25 @@ describe("createPlanningItemForCurrentUser", () => {
 
     expect(mockCreate).toHaveBeenCalledWith(
       expect.objectContaining({ startAt, endAt, allDay: true }),
+    );
+  });
+
+  // Reminder: a provided remindAt is forwarded verbatim to the repository.
+  it("forwards remindAt to the repository", async () => {
+    mockFindDefaultStatusId.mockResolvedValue("status-default");
+    mockFindDefaultItemTypeId.mockResolvedValue("item-type-default");
+    mockFindOwnedList.mockResolvedValue(ownedList);
+    mockCreate.mockResolvedValue({ id: "item-1" } as PlanningItem);
+
+    const remindAt = new Date("2026-08-01T09:00:00.000Z");
+    await createPlanningItemForCurrentUser({
+      title: "Take pills",
+      listId: "list-1",
+      remindAt,
+    });
+
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ remindAt }),
     );
   });
 
@@ -623,6 +651,137 @@ describe("updatePlanningItemForCurrentUser", () => {
       "item-1",
     );
     expect(mockUpdate).toHaveBeenCalledWith("item-1", { startAt, endAt });
+  });
+
+  // Reminder re-arm: setting a NEW remindAt drops the prior acknowledgement so
+  // the reminder can fire again (Req 1.4).
+  it("re-arms the reminder (clears reminderSeenAt) when remindAt changes to a new time", async () => {
+    mockFindOwned.mockResolvedValue({
+      id: "item-1",
+      remindAt: new Date("2026-08-01T09:00:00.000Z"),
+      reminderSeenAt: new Date("2026-08-01T09:05:00.000Z"),
+    } as PlanningItem);
+    mockUpdate.mockResolvedValue({ id: "item-1" } as PlanningItem);
+
+    const remindAt = new Date("2026-08-02T09:00:00.000Z");
+    await updatePlanningItemForCurrentUser("item-1", { remindAt });
+
+    expect(mockUpdate).toHaveBeenCalledWith("item-1", {
+      remindAt,
+      reminderSeenAt: null,
+    });
+  });
+
+  // Reminder clear: setting remindAt to null clears the acknowledgement too.
+  it("clears reminderSeenAt when remindAt is cleared to null", async () => {
+    mockFindOwned.mockResolvedValue({
+      id: "item-1",
+      remindAt: new Date("2026-08-01T09:00:00.000Z"),
+      reminderSeenAt: new Date("2026-08-01T09:05:00.000Z"),
+    } as PlanningItem);
+    mockUpdate.mockResolvedValue({ id: "item-1" } as PlanningItem);
+
+    await updatePlanningItemForCurrentUser("item-1", { remindAt: null });
+
+    expect(mockUpdate).toHaveBeenCalledWith("item-1", {
+      remindAt: null,
+      reminderSeenAt: null,
+    });
+  });
+
+  // Idempotent save: echoing the SAME remindAt (dialog re-sends the current
+  // value on an unrelated edit) must NOT resurrect a dismissed reminder.
+  it("does not re-arm when remindAt is unchanged (preserves the acknowledgement)", async () => {
+    const remindAt = new Date("2026-08-01T09:00:00.000Z");
+    mockFindOwned.mockResolvedValue({
+      id: "item-1",
+      remindAt,
+      reminderSeenAt: new Date("2026-08-01T09:05:00.000Z"),
+    } as PlanningItem);
+    mockUpdate.mockResolvedValue({ id: "item-1" } as PlanningItem);
+
+    await updatePlanningItemForCurrentUser("item-1", {
+      remindAt: new Date("2026-08-01T09:00:00.000Z"),
+      title: "Unrelated edit",
+    });
+
+    expect(mockUpdate).toHaveBeenCalledWith("item-1", {
+      title: "Unrelated edit",
+      remindAt: new Date("2026-08-01T09:00:00.000Z"),
+    });
+    // reminderSeenAt must NOT be part of the patch.
+    expect(mockUpdate).toHaveBeenCalledWith(
+      "item-1",
+      expect.not.objectContaining({ reminderSeenAt: expect.anything() }),
+    );
+  });
+
+  // Reminder is orthogonal to the schedule: setting remindAt never triggers the
+  // overlap check (Req 5.3).
+  it("does not run the overlap check when only remindAt changes", async () => {
+    mockFindOwned.mockResolvedValue({
+      id: "item-1",
+      startAt: null,
+      endAt: null,
+      remindAt: null,
+      allDay: false,
+    } as PlanningItem);
+    mockUpdate.mockResolvedValue({ id: "item-1" } as PlanningItem);
+
+    await updatePlanningItemForCurrentUser("item-1", {
+      remindAt: new Date("2026-08-02T09:00:00.000Z"),
+    });
+
+    expect(mockFindOverlap).not.toHaveBeenCalled();
+  });
+});
+
+describe("listDueRemindersForCurrentUser", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("delegates to the repository with the resolved user and a now Date", async () => {
+    const items = [{ id: "r-1" }, { id: "r-2" }] as PlanningItem[];
+    mockListDueReminders.mockResolvedValue(items);
+
+    const result = await listDueRemindersForCurrentUser();
+
+    expect(mockListDueReminders).toHaveBeenCalledTimes(1);
+    const [userId, now] = mockListDueReminders.mock.calls[0];
+    expect(userId).toBe(DEV_USER_ID);
+    expect(now).toBeInstanceOf(Date);
+    expect(result).toBe(items);
+  });
+});
+
+describe("acknowledgeReminderForCurrentUser", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("prechecks ownership then stamps reminderSeenAt via the repository", async () => {
+    mockFindOwned.mockResolvedValue({ id: "item-1" } as PlanningItem);
+    const acknowledged = { id: "item-1" } as PlanningItem;
+    mockMarkReminderSeen.mockResolvedValue(acknowledged);
+
+    const result = await acknowledgeReminderForCurrentUser("item-1");
+
+    expect(mockFindOwned).toHaveBeenCalledWith(DEV_USER_ID, "item-1");
+    expect(mockMarkReminderSeen).toHaveBeenCalledTimes(1);
+    const [id, seenAt] = mockMarkReminderSeen.mock.calls[0];
+    expect(id).toBe("item-1");
+    expect(seenAt).toBeInstanceOf(Date);
+    expect(result).toBe(acknowledged);
+  });
+
+  it("throws NotFoundError and never stamps when the reminder is not owned", async () => {
+    mockFindOwned.mockResolvedValue(null);
+
+    await expect(
+      acknowledgeReminderForCurrentUser("missing"),
+    ).rejects.toThrow(NotFoundError);
+    expect(mockMarkReminderSeen).not.toHaveBeenCalled();
   });
 });
 

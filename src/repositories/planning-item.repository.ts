@@ -24,6 +24,9 @@ export interface CreatePlanningItemData {
   startAt?: Date | null;
   endAt?: Date | null;
   allDay?: boolean;
+  // Reminder time; omit to fall back to the column default (NULL). A freshly
+  // created item is never pre-acknowledged, so `reminderSeenAt` starts NULL.
+  remindAt?: Date | null;
 }
 
 /**
@@ -43,6 +46,12 @@ export interface UpdatePlanningItemData {
   startAt?: Date | null;
   endAt?: Date | null;
   allDay?: boolean;
+  remindAt?: Date | null;
+  // Internal-only: set exclusively by the service (re-arm on a new `remindAt`,
+  // clear when the reminder is removed). NEVER populated from the client update
+  // schema — acknowledgement goes through `markReminderSeen` / the dedicated
+  // reminders endpoint, not the general PATCH.
+  reminderSeenAt?: Date | null;
   archived?: boolean;
 }
 
@@ -77,6 +86,45 @@ export async function listPlanningItemsByUser(
   return prisma.planningItem.findMany({
     where: { userId, deletedAt: null },
     orderBy: { createdAt: "desc" },
+  });
+}
+
+/**
+ * The user's DUE reminders at instant `now`: live items (`deletedAt` null, not
+ * archived) that have a `remindAt` at or before `now` and have not been
+ * acknowledged (`reminderSeenAt` null). Ordered soonest-first. This is the
+ * authoritative "due" predicate — the client never recomputes it; it uses the
+ * server's clock. Completion status is intentionally NOT part of the predicate,
+ * keeping reminders decoupled from the Status catalog.
+ */
+export async function listDueReminders(
+  userId: string,
+  now: Date,
+): Promise<PlanningItem[]> {
+  return prisma.planningItem.findMany({
+    where: {
+      userId,
+      deletedAt: null,
+      archived: false,
+      remindAt: { not: null, lte: now },
+      reminderSeenAt: null,
+    },
+    orderBy: { remindAt: "asc" },
+  });
+}
+
+/**
+ * Stamps `reminderSeenAt` on an item, acknowledging its reminder. The
+ * service-layer ownership precheck guarantees the row is live and owned before
+ * this runs, so no ownership filter is needed here.
+ */
+export async function markReminderSeen(
+  id: string,
+  seenAt: Date,
+): Promise<PlanningItem> {
+  return prisma.planningItem.update({
+    where: { id },
+    data: { reminderSeenAt: seenAt },
   });
 }
 

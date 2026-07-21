@@ -7,9 +7,11 @@ import {
   findDefaultStatusId,
   findOverlappingTimedItem,
   findOwnedPlanningItem,
+  listDueReminders,
   listPlanningItemsByUser,
   listScheduledItemsByCategory,
   listScheduledItemsForUser,
+  markReminderSeen,
   softDeletePlanningItem,
   updatePlanningItem,
 } from "../repositories/planning-item.repository";
@@ -116,6 +118,7 @@ export async function createPlanningItemForCurrentUser(
     startAt,
     endAt,
     allDay: input.allDay ?? false,
+    remindAt: input.remindAt ?? null,
   });
 }
 
@@ -187,6 +190,31 @@ export async function getPlanningItemForCurrentUser(
 }
 
 /**
+ * The current user's due reminders (live, `remindAt <= now`, not yet
+ * acknowledged), soonest-first — the data source for the notification bell. The
+ * acting user is resolved server-side and "now" is the server clock, so the due
+ * set is authoritative and cannot be spoofed by the client.
+ */
+export async function listDueRemindersForCurrentUser(): Promise<PlanningItem[]> {
+  const userId = await getCurrentUserId();
+  return listDueReminders(userId, new Date());
+}
+
+/**
+ * Acknowledges (dismisses) an owned reminder by stamping `reminderSeenAt` with
+ * the server clock, removing it from the due set. Ownership is prechecked here,
+ * so an absent or foreign id yields `NotFoundError` (404) without leaking
+ * existence — same pattern as get/update/delete.
+ */
+export async function acknowledgeReminderForCurrentUser(
+  id: string,
+): Promise<PlanningItem> {
+  const userId = await getCurrentUserId();
+  await getOwnedPlanningItemOrThrow(userId, id);
+  return markReminderSeen(id, new Date());
+}
+
+/**
  * Updates an owned item. Ownership is prechecked here; only the fields
  * present in `input` are forwarded to the repository, and an explicit
  * `null` on a nullable field is passed through to clear it (distinct from
@@ -229,6 +257,15 @@ export async function updatePlanningItemForCurrentUser(
     effectiveStartAt === null &&
     existing.endAt !== null;
 
+  // A reminder re-arms only when its instant differs from the stored one.
+  // Compared by epoch millis so equal times (the dialog echoing the current
+  // value on an unrelated save) are treated as "unchanged" and preserve the
+  // prior acknowledgement.
+  const remindAtChanged =
+    input.remindAt !== undefined &&
+    (input.remindAt?.getTime() ?? null) !==
+      (existing.remindAt?.getTime() ?? null);
+
   return updatePlanningItem(id, {
     ...(input.title !== undefined ? { title: input.title } : {}),
     ...(input.description !== undefined
@@ -248,6 +285,16 @@ export async function updatePlanningItemForCurrentUser(
         ? { endAt: null }
         : {}),
     ...(input.allDay !== undefined ? { allDay: input.allDay } : {}),
+    // Forward `remindAt` when present, and re-arm ONLY when the time actually
+    // CHANGES: dropping the prior acknowledgement so a rescheduled reminder can
+    // fire again (and a cleared reminder has nothing left to acknowledge).
+    // Keying on a real change (not merely on the key being present) is what
+    // stops a previously dismissed reminder from resurfacing when the user saves
+    // an unrelated edit — the dialog always echoes the current `remindAt` back.
+    // `remindAt` is orthogonal to the schedule, so it never enters
+    // validateSchedule/assertNoTimedOverlap.
+    ...(input.remindAt !== undefined ? { remindAt: input.remindAt } : {}),
+    ...(remindAtChanged ? { reminderSeenAt: null } : {}),
     ...(input.archived !== undefined ? { archived: input.archived } : {}),
   });
 }

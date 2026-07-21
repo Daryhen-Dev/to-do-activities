@@ -140,6 +140,20 @@ describe("createPlanningItemSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  // Reminder: an ISO datetime coerces to a Date.
+  it("coerces an ISO datetime string in remindAt to a Date", () => {
+    const result = createPlanningItemSchema.safeParse({
+      title: "Take pills",
+      listId: "list-1",
+      remindAt: "2026-08-01T09:00:00.000Z",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.remindAt).toBeInstanceOf(Date);
+    }
+  });
+
   // Requirement 2.1: a point-in-time schedule (a start with no end) is valid.
   it("accepts a point schedule with startAt and no endAt", () => {
     const result = createPlanningItemSchema.safeParse({
@@ -306,6 +320,43 @@ describe("updatePlanningItemSchema", () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.startAt).toBeInstanceOf(Date);
+    }
+  });
+
+  // Reminder: coerces an ISO datetime to a Date on update.
+  it("coerces an ISO datetime string in remindAt to a Date", () => {
+    const result = updatePlanningItemSchema.safeParse({
+      remindAt: "2026-09-01T09:00:00.000Z",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.remindAt).toBeInstanceOf(Date);
+    }
+  });
+
+  // Reminder is clearable via an explicit null (like dueAt).
+  it("accepts an explicit null for remindAt to clear it", () => {
+    const result = updatePlanningItemSchema.safeParse({ remindAt: null });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.remindAt).toBeNull();
+    }
+  });
+
+  // Requirement 4.5: acknowledgement is not client-writable through the general
+  // update surface — reminderSeenAt is stripped (not part of the schema).
+  it("strips reminderSeenAt (never client-writable via the general update)", () => {
+    const result = updatePlanningItemSchema.safeParse({
+      reminderSeenAt: "2026-09-01T09:00:00.000Z",
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(
+        (result.data as Record<string, unknown>).reminderSeenAt,
+      ).toBeUndefined();
     }
   });
 });

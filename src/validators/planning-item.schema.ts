@@ -23,6 +23,11 @@ export const createPlanningItemSchema = z
     startAt: z.coerce.date().optional(),
     endAt: z.coerce.date().optional(),
     allDay: z.boolean().optional(),
+    // Reminder time. Independent of the schedule — not part of the schedule
+    // consistency refines below. `reminderSeenAt` is intentionally NOT part of
+    // this schema: acknowledgement happens only via the dedicated reminders
+    // endpoint, never from a client-supplied payload.
+    remindAt: z.coerce.date().optional(),
   })
   // A schedule must be internally consistent: an end requires a start, and it
   // cannot precede the start. The service re-checks the EFFECTIVE schedule on
@@ -70,6 +75,10 @@ export const updatePlanningItemSchema = z.object({
   startAt: z.coerce.date().nullable().optional(),
   endAt: z.coerce.date().nullable().optional(),
   allDay: z.boolean().optional(),
+  // Nullable = clearable (follows the `dueAt` precedent). `reminderSeenAt` is
+  // deliberately absent: it is server-stamped via the dedicated reminders
+  // endpoint and never client-writable through this general update surface.
+  remindAt: z.coerce.date().nullable().optional(),
   archived: z.boolean().optional(),
 });
 

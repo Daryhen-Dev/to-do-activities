@@ -134,14 +134,16 @@ model PlanningItem {
   statusId    String
   title       String
   description String?
-  dueAt       DateTime? @map("due_at")
-  startAt     DateTime? @map("start_at")
-  endAt       DateTime? @map("end_at")
-  allDay      Boolean   @default(false) @map("all_day")
-  archived    Boolean   @default(false)
-  deletedAt   DateTime? @map("deleted_at")
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  dueAt          DateTime? @map("due_at")
+  startAt        DateTime? @map("start_at")
+  endAt          DateTime? @map("end_at")
+  allDay         Boolean   @default(false) @map("all_day")
+  remindAt       DateTime? @map("remind_at")
+  reminderSeenAt DateTime? @map("reminder_seen_at")
+  archived       Boolean   @default(false)
+  deletedAt      DateTime? @map("deleted_at")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   list     List      @relation(fields: [listId], references: [id], onDelete: Cascade)
@@ -156,5 +158,6 @@ model PlanningItem {
   @@index([priorityId])
   @@index([startAt])
   @@index([userId, archived, deletedAt])
+  @@index([userId, remindAt])
   @@map("planning_items")
 }

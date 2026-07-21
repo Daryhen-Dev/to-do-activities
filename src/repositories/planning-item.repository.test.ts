@@ -7,9 +7,11 @@ import {
   findDefaultStatusId,
   findOverlappingTimedItem,
   findOwnedPlanningItem,
+  listDueReminders,
   listPlanningItemsByUser,
   listScheduledItemsByCategory,
   listScheduledItemsForUser,
+  markReminderSeen,
   softDeletePlanningItem,
   updatePlanningItem,
 } from "./planning-item.repository";
@@ -300,6 +302,133 @@ describe("planning-item repository (integration)", () => {
     await expect(
       updatePlanningItem(item.id, { statusId: "does-not-exist" }),
     ).rejects.toThrow(/do not exist/);
+  });
+
+  it("listDueReminders returns only live, due, un-acknowledged reminders ordered by remindAt", async () => {
+    const now = new Date("2026-10-01T12:00:00.000Z");
+    const base = {
+      userId: DEV_USER_ID,
+      description: null,
+      listId,
+      itemTypeId,
+      priorityId: null,
+      statusId,
+      dueAt: null,
+    };
+
+    // DUE: remindAt in the past, not acknowledged. Two of them to assert order.
+    const dueLater = await createPlanningItem({
+      ...base,
+      title: "reminder due later",
+      remindAt: new Date("2026-10-01T11:30:00.000Z"),
+    });
+    createdItemIds.push(dueLater.id);
+    const dueEarlier = await createPlanningItem({
+      ...base,
+      title: "reminder due earlier",
+      remindAt: new Date("2026-10-01T10:00:00.000Z"),
+    });
+    createdItemIds.push(dueEarlier.id);
+
+    // EXCLUDED: future remindAt.
+    const future = await createPlanningItem({
+      ...base,
+      title: "reminder in the future",
+      remindAt: new Date("2026-10-01T13:00:00.000Z"),
+    });
+    createdItemIds.push(future.id);
+
+    // EXCLUDED: already acknowledged.
+    const acknowledged = await createPlanningItem({
+      ...base,
+      title: "reminder acknowledged",
+      remindAt: new Date("2026-10-01T09:00:00.000Z"),
+    });
+    createdItemIds.push(acknowledged.id);
+    await markReminderSeen(acknowledged.id, new Date("2026-10-01T09:05:00.000Z"));
+
+    // EXCLUDED: no remindAt at all.
+    const noReminder = await createPlanningItem({
+      ...base,
+      title: "no reminder",
+    });
+    createdItemIds.push(noReminder.id);
+
+    // EXCLUDED: soft-deleted despite a due remindAt.
+    const deleted = await createPlanningItem({
+      ...base,
+      title: "deleted reminder",
+      remindAt: new Date("2026-10-01T08:00:00.000Z"),
+    });
+    createdItemIds.push(deleted.id);
+    await softDeletePlanningItem(deleted.id);
+
+    // EXCLUDED: archived despite a due remindAt.
+    const archived = await createPlanningItem({
+      ...base,
+      title: "archived reminder",
+      remindAt: new Date("2026-10-01T08:30:00.000Z"),
+    });
+    createdItemIds.push(archived.id);
+    await updatePlanningItem(archived.id, { archived: true });
+
+    const due = await listDueReminders(DEV_USER_ID, now);
+    const ids = due.map((item) => item.id);
+
+    expect(ids).toContain(dueEarlier.id);
+    expect(ids).toContain(dueLater.id);
+    expect(ids).not.toContain(future.id);
+    expect(ids).not.toContain(acknowledged.id);
+    expect(ids).not.toContain(noReminder.id);
+    expect(ids).not.toContain(deleted.id);
+    expect(ids).not.toContain(archived.id);
+
+    // Ordered by remindAt ascending: the earlier one precedes the later one.
+    expect(ids.indexOf(dueEarlier.id)).toBeLessThan(ids.indexOf(dueLater.id));
+  });
+
+  it("listDueReminders excludes another user's due reminders", async () => {
+    const stranger = await prisma.user.create({
+      data: { email: `reminder-stranger-${Date.now()}@test.local` },
+    });
+    throwawayUserIds.push(stranger.id);
+
+    const strangersReminder = await prisma.planningItem.create({
+      data: {
+        userId: stranger.id,
+        title: "stranger's due reminder",
+        listId,
+        itemTypeId,
+        statusId,
+        remindAt: new Date("2026-10-01T10:00:00.000Z"),
+      },
+    });
+
+    const due = await listDueReminders(DEV_USER_ID, new Date("2026-10-01T12:00:00.000Z"));
+    const ids = due.map((item) => item.id);
+
+    expect(ids).not.toContain(strangersReminder.id);
+  });
+
+  it("markReminderSeen stamps reminderSeenAt on the row", async () => {
+    const item = await createPlanningItem({
+      userId: DEV_USER_ID,
+      title: "reminder to acknowledge",
+      description: null,
+      listId,
+      itemTypeId,
+      priorityId: null,
+      statusId,
+      dueAt: null,
+      remindAt: new Date("2026-10-01T10:00:00.000Z"),
+    });
+    createdItemIds.push(item.id);
+    expect(item.reminderSeenAt).toBeNull();
+
+    const seenAt = new Date("2026-10-01T10:05:00.000Z");
+    const updated = await markReminderSeen(item.id, seenAt);
+
+    expect(updated.reminderSeenAt?.toISOString()).toBe(seenAt.toISOString());
   });
 });
 

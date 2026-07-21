@@ -58,6 +58,9 @@ const editTaskSchema = z
     // Empty string means "unset". Format matches `allDay` (date vs datetime-local).
     startAt: z.string(),
     endAt: z.string(),
+    // Reminder datetime-local. Empty string means "no reminder". Independent of
+    // the schedule, so it is not part of the start/end refines below.
+    remindAt: z.string(),
   })
   // An end requires a start.
   .refine((data) => !(data.endAt !== "" && data.startAt === ""), {
@@ -88,6 +91,7 @@ export interface TaskEditPayload {
   startAt?: string | null;
   endAt?: string | null;
   allDay?: boolean;
+  remindAt?: string | null;
 }
 
 interface TaskEditDialogProps {
@@ -182,6 +186,7 @@ export function TaskEditDialog({
     endAt: item.allDay
       ? toDateValue(item.endAt)
       : toDateTimeLocalValue(item.endAt),
+    remindAt: toDateTimeLocalValue(item.remindAt),
   });
 
   const form = useForm<EditTaskValues>({
@@ -232,6 +237,8 @@ export function TaskEditDialog({
       startAt,
       endAt,
       allDay: values.allDay,
+      // A reminder is always a specific instant (never all-day).
+      remindAt: toIsoUtc(values.remindAt, false),
     });
     if (succeeded) {
       setOpen(false);
@@ -470,6 +477,19 @@ export function TaskEditDialog({
                   )}
                 />
               </div>
+              <FormField
+                control={form.control}
+                name="remindAt"
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>Reminder</FormLabel>
+                    <FormControl>
+                      <Input type="datetime-local" {...field} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
             </div>
 
           </form>

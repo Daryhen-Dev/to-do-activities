@@ -1,5 +1,6 @@
 import { auth } from "@/auth";
 import { AppSidebar } from "@/components/layout/app-sidebar";
+import { ReminderBell } from "@/components/reminders/reminder-bell";
 import {
   SidebarInset,
   SidebarProvider,
@@ -29,6 +30,9 @@ export default async function AppLayout({
       <SidebarInset>
         <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
           <SidebarTrigger />
+          <div className="ml-auto">
+            <ReminderBell />
+          </div>
         </header>
         {children}
       </SidebarInset>
