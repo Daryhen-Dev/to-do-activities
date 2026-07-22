@@ -1,7 +1,7 @@
 "use client";
 
 import type { Category, List } from "@prisma/client";
-import { Pencil, Trash2 } from "lucide-react";
+import { Check, Pencil, SlidersHorizontal, Trash2, X } from "lucide-react";
 import { useState } from "react";
 
 import {
@@ -18,7 +18,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { resolveCategoryColor } from "@/lib/category-color";
 import {
-  clampProgress,
   daysRemaining,
   objectiveStatus,
   type ObjectiveStatus,
@@ -36,7 +35,7 @@ interface ObjectiveCardProps {
   lists: List[];
   onUpdate: (id: string, payload: ObjectiveFormPayload) => Promise<boolean>;
   onDelete: (objective: ObjectiveWithCategory) => void;
-  /** Commits an inline progress change (called on release, not per tick). */
+  /** Commits a progress change (called when the user confirms the edit). */
   onProgressCommit: (id: string, progress: number) => void;
 }
 
@@ -70,9 +69,12 @@ function timeLabel(
 }
 
 /**
- * A single objective in the stack: title + section swatch + status badge, a
- * progress bar, a time-remaining line, and an inline progress slider that
- * commits on release. Edit opens the shared form dialog; delete confirms.
+ * A single objective in the stack. By default the progress bar is READ-ONLY
+ * (title + section + status badge + bar + time-remaining). Progress editing is
+ * an explicit, separate mode: the "Update progress" button reveals a slider
+ * (with Save/Cancel); confirming commits and returns to read-only. A `draft`
+ * value is used only while editing, so outside edit mode the card always
+ * reflects the objective's real progress (never stale after a dialog edit).
  */
 export function ObjectiveCard({
   objective,
@@ -83,23 +85,35 @@ export function ObjectiveCard({
   onProgressCommit,
 }: ObjectiveCardProps) {
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
-  // Local progress for a responsive slider; commits to the server on release.
-  const [localProgress, setLocalProgress] = useState(objective.progress ?? 0);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(0);
+
+  const saved = objective.progress ?? 0;
+  // Read-only shows the saved value; edit mode shows the live draft.
+  const displayProgress = editing ? draft : saved;
 
   const now = new Date();
   const endAt = objective.objectiveEndAt
     ? new Date(objective.objectiveEndAt)
     : null;
-  const status = objectiveStatus(endAt, localProgress, now);
+  const status = objectiveStatus(endAt, displayProgress, now);
   const swatch = resolveCategoryColor(
     objective.categoryColor,
     objective.categoryId,
   );
 
-  function commit(value: number) {
-    const clamped = clampProgress(value);
-    setLocalProgress(clamped);
-    onProgressCommit(objective.id, clamped);
+  function startEditing() {
+    setDraft(saved);
+    setEditing(true);
+  }
+
+  function save() {
+    setEditing(false);
+    onProgressCommit(objective.id, draft);
+  }
+
+  function cancel() {
+    setEditing(false);
   }
 
   return (
@@ -128,13 +142,13 @@ export function ObjectiveCard({
 
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span>{timeLabel(status, endAt, now)}</span>
-        <span className="tabular-nums">{localProgress}%</span>
+        <span className="tabular-nums">{displayProgress}%</span>
       </div>
 
-      {/* Progress bar */}
+      {/* Progress bar (reflects the draft while editing, the saved value otherwise) */}
       <div
         role="progressbar"
-        aria-valuenow={localProgress}
+        aria-valuenow={displayProgress}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-label={`${objective.title} progress`}
@@ -142,75 +156,102 @@ export function ObjectiveCard({
       >
         <div
           className="h-full rounded-full bg-primary transition-[width]"
-          style={{ width: `${localProgress}%` }}
+          style={{ width: `${displayProgress}%` }}
         />
       </div>
 
-      <div className="flex items-center gap-2">
-        {/* Inline progress control — commits on release, not per tick. */}
-        <input
-          type="range"
-          min={0}
-          max={100}
-          value={localProgress}
-          aria-label="Set progress"
-          onChange={(e) => setLocalProgress(Number(e.target.value))}
-          onPointerUp={(e) => commit(Number(e.currentTarget.value))}
-          onKeyUp={(e) => commit(Number(e.currentTarget.value))}
-          onBlur={(e) => commit(Number(e.currentTarget.value))}
-          className="flex-1 accent-primary"
-        />
+      {editing ? (
+        <div className="flex items-center gap-2">
+          <input
+            type="range"
+            min={0}
+            max={100}
+            value={draft}
+            autoFocus
+            aria-label="Set progress"
+            onChange={(e) => setDraft(Number(e.target.value))}
+            className="flex-1 accent-primary"
+          />
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Save progress"
+            onClick={save}
+          >
+            <Check />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Cancel"
+            onClick={cancel}
+          >
+            <X />
+          </Button>
+        </div>
+      ) : (
+        <div className="flex items-center justify-end gap-1">
+          <Button
+            variant="outline"
+            size="sm"
+            className="mr-auto"
+            onClick={startEditing}
+          >
+            <SlidersHorizontal />
+            Update progress
+          </Button>
 
-        <ObjectiveFormDialog
-          mode="edit"
-          objective={objective}
-          categories={categories}
-          lists={lists}
-          onSubmit={(payload) => onUpdate(objective.id, payload)}
-          trigger={
-            <Button variant="ghost" size="icon-sm" aria-label="Edit objective">
-              <Pencil />
-            </Button>
-          }
-        />
-
-        <AlertDialog
-          open={confirmDeleteOpen}
-          onOpenChange={setConfirmDeleteOpen}
-        >
-          <AlertDialogTrigger
-            render={
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label="Delete objective"
-              >
-                <Trash2 />
+          <ObjectiveFormDialog
+            mode="edit"
+            objective={objective}
+            categories={categories}
+            lists={lists}
+            onSubmit={(payload) => onUpdate(objective.id, payload)}
+            trigger={
+              <Button variant="ghost" size="icon-sm" aria-label="Edit objective">
+                <Pencil />
               </Button>
             }
           />
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete this objective?</AlertDialogTitle>
-              <AlertDialogDescription>
-                This archives &ldquo;{objective.title}&rdquo;.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                variant="destructive"
-                onClick={() => {
-                  onDelete(objective);
-                  setConfirmDeleteOpen(false);
-                }}
-              >
-                Delete
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </div>
+
+          <AlertDialog
+            open={confirmDeleteOpen}
+            onOpenChange={setConfirmDeleteOpen}
+          >
+            <AlertDialogTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Delete objective"
+                >
+                  <Trash2 />
+                </Button>
+              }
+            />
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete this objective?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This archives &ldquo;{objective.title}&rdquo;.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction
+                  variant="destructive"
+                  onClick={() => {
+                    onDelete(objective);
+                    setConfirmDeleteOpen(false);
+                  }}
+                >
+                  Delete
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+      )}
     </div>
   );
 }

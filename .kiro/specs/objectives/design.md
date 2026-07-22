@@ -149,10 +149,14 @@ Mirrors `NotesView`/`TaskList` (local state + optimistic mutations + toasts):
   `aria-valuemin=0`, `aria-valuemax=100`.
 - A days-remaining line derived from `daysRemaining` + status (e.g. "3 days
   left", "Overdue by N days", "Completed", "No deadline").
-- An **inline progress control**: a range `input` (0–100) bound to a local value;
-  it updates the bar live on change and **commits** on release (`onPointerUp`)
-  and `onBlur` (and Enter via `onKeyUp`), calling `onProgressCommit(id, value)`.
-  This avoids a PATCH per drag tick.
+- **Progress editing is a separate, explicit mode** (not an always-on control).
+  By default the bar is read-only; an "Update progress" button reveals a range
+  slider with Save/Cancel. A `draft` value is used only while editing (the bar
+  reflects it live); Save calls `onProgressCommit(id, draft)` and returns to
+  read-only, Cancel discards it. Outside edit mode the card always reflects the
+  saved `progress`, so it never goes stale after a dialog edit. This keeps
+  "view" and "edit" as distinct states rather than overlapping a slider on the
+  display bar.
 - Edit (opens `ObjectiveFormDialog`) and delete (confirm `AlertDialog`)
   affordances, delegated via props.
 
