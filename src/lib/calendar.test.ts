@@ -20,6 +20,7 @@ import {
   filterReminderLayer,
   filterHabitLayer,
   filterVisibleEvents,
+  parseHabitMarkerId,
   type CalendarEvent,
   type ScheduledItemWithCategory,
 } from "./calendar";
@@ -1229,5 +1230,24 @@ describe("filterVisibleEvents with habit events", () => {
     };
     const result = filterVisibleEvents([habitA, habitB], new Set(["cat-a"]));
     expect(result.map((e) => e.id)).toEqual(["hB"]);
+  });
+});
+
+
+describe("parseHabitMarkerId", () => {
+  it("round-trips the id produced by toHabitCalendarEvents", () => {
+    const [event] = toHabitCalendarEvents([
+      makeOccurrence({ habitId: "cabc123", date: "2026-07-20" }),
+    ]);
+    expect(parseHabitMarkerId(event.id)).toEqual({
+      habitId: "cabc123",
+      date: "2026-07-20",
+    });
+  });
+
+  it("returns null for a non-habit id", () => {
+    expect(parseHabitMarkerId("just-an-id")).toBeNull();
+    expect(parseHabitMarkerId("h1:not-a-date")).toBeNull();
+    expect(parseHabitMarkerId(":2026-07-20")).toBeNull();
   });
 });

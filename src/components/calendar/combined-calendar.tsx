@@ -13,6 +13,7 @@ import {
   filterVisibleEvents,
   groupEventsByDay,
   isSameDay,
+  parseHabitMarkerId,
   rangeFor,
   type ScheduledItemWithCategory,
   toCombinedCalendarEvents,
@@ -20,6 +21,7 @@ import {
   toReminderCalendarEvents,
 } from "@/lib/calendar";
 import type { HabitOccurrenceDTO } from "@/lib/habits";
+import { Button } from "@/components/ui/button";
 import { rescheduleEvent } from "@/lib/calendar-reschedule";
 import { useCalendarStore } from "@/stores/calendar-store";
 import { useCalendarFilterStore } from "@/stores/calendar-filter-store";
@@ -167,6 +169,45 @@ export function CombinedCalendar() {
       ? itemTypeById.get(peekEvent.itemTypeId)
       : undefined;
 
+  /**
+   * Toggles a habit occurrence's completion straight from its calendar peek,
+   * reusing `POST`/`DELETE /api/habits/[id]/completions`. Optimistically flips
+   * the marker (and the open peek), reverting on failure. The habit id + date
+   * are recovered from the marker id (`"{habitId}:{date}"`).
+   */
+  async function handleToggleHabitOccurrence(event: CalendarEvent) {
+    const parsed = parseHabitMarkerId(event.id);
+    if (!parsed) return;
+    const nextDone = !event.completed;
+    const snapshot = events;
+
+    const flip = (completed: boolean) => {
+      setEvents((prev) =>
+        prev.map((e) => (e.id === event.id ? { ...e, completed } : e)),
+      );
+      setPeekEvent((prev) =>
+        prev && prev.id === event.id ? { ...prev, completed } : prev,
+      );
+    };
+
+    flip(nextDone);
+
+    const res = await fetch(`/api/habits/${parsed.habitId}/completions`, {
+      method: nextDone ? "POST" : "DELETE",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ date: parsed.date }),
+    });
+    if (!res.ok) {
+      toast.error("Failed to update the habit");
+      setEvents(snapshot);
+      setPeekEvent((prev) =>
+        prev && prev.id === event.id
+          ? { ...prev, completed: event.completed }
+          : prev,
+      );
+    }
+  }
+
   /** Reschedules a dragged event via the shared optimistic-move helper. */
   function handleReschedule(
     event: CalendarEvent,
@@ -242,11 +283,22 @@ export function CombinedCalendar() {
             </div>
           ) : null}
           {peekEvent?.kind === "habit" ? (
-            <p className="text-xs font-medium">
-              {peekEvent.completed
-                ? "✓ Completed on this day"
-                : "Not completed on this day"}
-            </p>
+            <div className="grid gap-2">
+              <p className="text-xs font-medium">
+                {peekEvent.completed
+                  ? "✓ Completed on this day"
+                  : "Not completed on this day"}
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant={peekEvent.completed ? "outline" : "default"}
+                onClick={() => handleToggleHabitOccurrence(peekEvent)}
+                className="justify-self-start"
+              >
+                {peekEvent.completed ? "Mark not done" : "Mark done"}
+              </Button>
+            </div>
           ) : null}
           {peekEvent?.description ? (
             <p className="text-sm whitespace-pre-wrap">

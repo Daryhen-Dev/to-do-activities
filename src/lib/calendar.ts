@@ -368,6 +368,23 @@ export function filterHabitLayer(
 }
 
 /**
+ * Parses a habit occurrence-marker id (`"{habitId}:{date}"`, produced by
+ * `toHabitCalendarEvents`) back into its habit id and calendar date, or `null`
+ * when the id is not a habit marker. Uses the LAST colon as the separator (the
+ * date is a colon-free `"YYYY-MM-DD"`), so a habit id is returned intact.
+ */
+export function parseHabitMarkerId(
+  id: string,
+): { habitId: string; date: string } | null {
+  const idx = id.lastIndexOf(":");
+  if (idx <= 0) return null;
+  const habitId = id.slice(0, idx);
+  const date = id.slice(idx + 1);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  return { habitId, date };
+}
+
+/**
  * Events whose owning category is NOT hidden. An empty `hiddenIds` returns all
  * events; a `hiddenIds` covering every present category returns none. Events
  * without a `categoryId` (per-category view) are always kept.
