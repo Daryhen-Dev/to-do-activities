@@ -8,6 +8,7 @@ import {
   Pencil,
   Plus,
   StickyNote,
+  Target,
   Trash2,
 } from "lucide-react";
 import Link from "next/link";
@@ -273,6 +274,15 @@ export function AppSidebar({ user, ...props }: AppSidebarProps) {
               >
                 <StickyNote />
                 <span>Notes</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={pathname === "/objectives"}
+                render={<Link href="/objectives" />}
+              >
+                <Target />
+                <span>Objectives</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>

@@ -18,6 +18,7 @@ vi.mock("../repositories/planning-item.repository", () => ({
   findOwnedPlanningItem: vi.fn(),
   listDueReminders: vi.fn(),
   listNotesByUser: vi.fn(),
+  listObjectivesByUser: vi.fn(),
   listPlanningItemsByUser: vi.fn(),
   listRemindersForUser: vi.fn(),
   listScheduledItemsByCategory: vi.fn(),
@@ -49,6 +50,7 @@ import {
   findOwnedPlanningItem,
   listDueReminders,
   listNotesByUser,
+  listObjectivesByUser,
   listPlanningItemsByUser,
   listRemindersForUser,
   listScheduledItemsByCategory,
@@ -64,6 +66,7 @@ import {
   getPlanningItemForCurrentUser,
   listDueRemindersForCurrentUser,
   listNotesForCurrentUser,
+  listObjectivesForCurrentUser,
   listPlanningItemsForCurrentUser,
   listRemindersForCurrentUserRange,
   listScheduledItemsForCategory,
@@ -87,6 +90,7 @@ const mockListDueReminders = vi.mocked(listDueReminders);
 const mockMarkReminderSeen = vi.mocked(markReminderSeen);
 const mockListRemindersForUser = vi.mocked(listRemindersForUser);
 const mockListNotesByUser = vi.mocked(listNotesByUser);
+const mockListObjectivesByUser = vi.mocked(listObjectivesByUser);
 
 const ownedList = { id: "list-1" } as List;
 
@@ -130,6 +134,9 @@ describe("createPlanningItemForCurrentUser", () => {
       endAt: null,
       allDay: false,
       remindAt: null,
+      objectiveStartAt: null,
+      objectiveEndAt: null,
+      progress: null,
     });
     expect(result).toBe(created);
   });
@@ -269,6 +276,47 @@ describe("createPlanningItemForCurrentUser", () => {
     expect(mockCreate).toHaveBeenCalledWith(
       expect.objectContaining({ remindAt }),
     );
+  });
+
+  // Objective fields flow through to the repository.
+  it("forwards objectiveStartAt/objectiveEndAt/progress to the repository", async () => {
+    mockFindDefaultStatusId.mockResolvedValue("status-default");
+    mockFindDefaultItemTypeId.mockResolvedValue("item-type-default");
+    mockFindOwnedList.mockResolvedValue(ownedList);
+    mockCreate.mockResolvedValue({ id: "item-1" } as PlanningItem);
+
+    const objectiveStartAt = new Date("2026-08-01T00:00:00.000Z");
+    const objectiveEndAt = new Date("2026-09-01T00:00:00.000Z");
+    await createPlanningItemForCurrentUser({
+      title: "Ship v2",
+      listId: "list-1",
+      objectiveStartAt,
+      objectiveEndAt,
+      progress: 25,
+    });
+
+    expect(mockCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ objectiveStartAt, objectiveEndAt, progress: 25 }),
+    );
+    // Objective dates never trigger the timed overlap check.
+    expect(mockFindOverlap).not.toHaveBeenCalled();
+  });
+
+  // Objective timeframe must be consistent (end on/after start) before any write.
+  it("throws ValidationError and never persists when objectiveEndAt precedes objectiveStartAt", async () => {
+    mockFindDefaultStatusId.mockResolvedValue("status-default");
+    mockFindDefaultItemTypeId.mockResolvedValue("item-type-default");
+    mockFindOwnedList.mockResolvedValue(ownedList);
+
+    await expect(
+      createPlanningItemForCurrentUser({
+        title: "Bad objective",
+        listId: "list-1",
+        objectiveStartAt: new Date("2026-09-01T00:00:00.000Z"),
+        objectiveEndAt: new Date("2026-08-01T00:00:00.000Z"),
+      }),
+    ).rejects.toThrow(ValidationError);
+    expect(mockCreate).not.toHaveBeenCalled();
   });
 
   // Requirement 2.2: an inconsistent schedule fails before any write.
@@ -496,6 +544,25 @@ describe("listNotesForCurrentUser", () => {
 
     expect(mockListNotesByUser).toHaveBeenCalledWith(DEV_USER_ID);
     expect(result).toBe(notes);
+  });
+});
+
+describe("listObjectivesForCurrentUser", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("delegates to the repository with the resolved current user", async () => {
+    const objectives = [
+      { id: "o-1", categoryId: "cat-1" },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ] as any as Awaited<ReturnType<typeof listObjectivesByUser>>;
+    mockListObjectivesByUser.mockResolvedValue(objectives);
+
+    const result = await listObjectivesForCurrentUser();
+
+    expect(mockListObjectivesByUser).toHaveBeenCalledWith(DEV_USER_ID);
+    expect(result).toBe(objectives);
   });
 });
 
@@ -794,6 +861,47 @@ describe("updatePlanningItemForCurrentUser", () => {
     });
 
     expect(mockFindOverlap).not.toHaveBeenCalled();
+  });
+
+  // Objective fields are forwarded on update.
+  it("forwards objectiveStartAt/objectiveEndAt/progress on update", async () => {
+    mockFindOwned.mockResolvedValue({
+      id: "item-1",
+      objectiveStartAt: null,
+      objectiveEndAt: null,
+    } as PlanningItem);
+    mockUpdate.mockResolvedValue({ id: "item-1" } as PlanningItem);
+
+    const objectiveStartAt = new Date("2026-08-01T00:00:00.000Z");
+    const objectiveEndAt = new Date("2026-09-01T00:00:00.000Z");
+    await updatePlanningItemForCurrentUser("item-1", {
+      objectiveStartAt,
+      objectiveEndAt,
+      progress: 60,
+    });
+
+    expect(mockUpdate).toHaveBeenCalledWith("item-1", {
+      objectiveStartAt,
+      objectiveEndAt,
+      progress: 60,
+    });
+    expect(mockFindOverlap).not.toHaveBeenCalled();
+  });
+
+  // The effective objective timeframe is validated against the stored start.
+  it("throws ValidationError when the effective objectiveEndAt precedes the stored objectiveStartAt", async () => {
+    mockFindOwned.mockResolvedValue({
+      id: "item-1",
+      objectiveStartAt: new Date("2026-09-01T00:00:00.000Z"),
+      objectiveEndAt: null,
+    } as PlanningItem);
+
+    await expect(
+      updatePlanningItemForCurrentUser("item-1", {
+        objectiveEndAt: new Date("2026-08-01T00:00:00.000Z"),
+      }),
+    ).rejects.toThrow(ValidationError);
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 });
 

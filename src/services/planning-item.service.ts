@@ -9,6 +9,7 @@ import {
   findOwnedPlanningItem,
   listDueReminders,
   listNotesByUser,
+  listObjectivesByUser,
   listPlanningItemsByUser,
   listRemindersForUser,
   listScheduledItemsByCategory,
@@ -19,6 +20,7 @@ import {
 } from "../repositories/planning-item.repository";
 import type { ScheduledItemWithCategory } from "../lib/calendar";
 import type { NoteWithCategory } from "../lib/notes";
+import type { ObjectiveWithCategory } from "../lib/objectives";
 import { findOwnedList } from "../repositories/list.repository";
 import { findOwnedCategory } from "../repositories/category.repository";
 import type {
@@ -38,6 +40,23 @@ function validateSchedule(startAt: Date | null, endAt: Date | null): void {
   }
   if (startAt && endAt && endAt < startAt) {
     throw new ValidationError("endAt must be on or after startAt");
+  }
+}
+
+/**
+ * Enforces objective-timeframe consistency: when both are set, `objectiveEndAt`
+ * may not precede `objectiveStartAt`. Callers pass the EFFECTIVE timeframe (for
+ * updates, the stored row merged with the patch). Independent of the schedule
+ * and the no-overlap rule — objective dates live in their own columns.
+ */
+function validateObjectiveTimeframe(
+  start: Date | null,
+  end: Date | null,
+): void {
+  if (start && end && end < start) {
+    throw new ValidationError(
+      "objectiveEndAt must be on or after objectiveStartAt",
+    );
   }
 }
 
@@ -109,6 +128,11 @@ export async function createPlanningItemForCurrentUser(
   validateSchedule(startAt, endAt);
   await assertNoTimedOverlap(userId, startAt, endAt, input.allDay ?? false);
 
+  validateObjectiveTimeframe(
+    input.objectiveStartAt ?? null,
+    input.objectiveEndAt ?? null,
+  );
+
   return createPlanningItem({
     userId,
     title: input.title,
@@ -122,6 +146,9 @@ export async function createPlanningItemForCurrentUser(
     endAt,
     allDay: input.allDay ?? false,
     remindAt: input.remindAt ?? null,
+    objectiveStartAt: input.objectiveStartAt ?? null,
+    objectiveEndAt: input.objectiveEndAt ?? null,
+    progress: input.progress ?? null,
   });
 }
 
@@ -193,6 +220,19 @@ export async function listRemindersForCurrentUserRange(
 export async function listNotesForCurrentUser(): Promise<NoteWithCategory[]> {
   const userId = await getCurrentUserId();
   return listNotesByUser(userId);
+}
+
+/**
+ * The current user's objectives (item type `objetivo`), each enriched with its
+ * owning category, ordered by deadline — the data source for the Objectives
+ * view. Resolves the acting user server-side. Create/update/delete reuse the
+ * generic planning-item service functions; only this read is objective-specific.
+ */
+export async function listObjectivesForCurrentUser(): Promise<
+  ObjectiveWithCategory[]
+> {
+  const userId = await getCurrentUserId();
+  return listObjectivesByUser(userId);
 }
 
 /**
@@ -296,6 +336,18 @@ export async function updatePlanningItemForCurrentUser(
     (input.remindAt?.getTime() ?? null) !==
       (existing.remindAt?.getTime() ?? null);
 
+  // Validate the EFFECTIVE objective timeframe (stored overlaid with the patch,
+  // `null` = clear). Independent of the schedule / no-overlap checks above.
+  const effectiveObjectiveStartAt =
+    input.objectiveStartAt !== undefined
+      ? input.objectiveStartAt
+      : existing.objectiveStartAt;
+  const effectiveObjectiveEndAt =
+    input.objectiveEndAt !== undefined
+      ? input.objectiveEndAt
+      : existing.objectiveEndAt;
+  validateObjectiveTimeframe(effectiveObjectiveStartAt, effectiveObjectiveEndAt);
+
   return updatePlanningItem(id, {
     ...(input.title !== undefined ? { title: input.title } : {}),
     ...(input.description !== undefined
@@ -325,6 +377,13 @@ export async function updatePlanningItemForCurrentUser(
     // validateSchedule/assertNoTimedOverlap.
     ...(input.remindAt !== undefined ? { remindAt: input.remindAt } : {}),
     ...(remindAtChanged ? { reminderSeenAt: null } : {}),
+    ...(input.objectiveStartAt !== undefined
+      ? { objectiveStartAt: input.objectiveStartAt }
+      : {}),
+    ...(input.objectiveEndAt !== undefined
+      ? { objectiveEndAt: input.objectiveEndAt }
+      : {}),
+    ...(input.progress !== undefined ? { progress: input.progress } : {}),
     ...(input.archived !== undefined ? { archived: input.archived } : {}),
   });
 }

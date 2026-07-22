@@ -154,6 +154,59 @@ describe("createPlanningItemSchema", () => {
     }
   });
 
+  // Objective fields: accepted with a consistent timeframe and valid progress.
+  it("accepts objective fields with a consistent timeframe and valid progress", () => {
+    const result = createPlanningItemSchema.safeParse({
+      title: "Ship v2",
+      listId: "list-1",
+      objectiveStartAt: "2026-08-01T00:00:00.000Z",
+      objectiveEndAt: "2026-09-01T00:00:00.000Z",
+      progress: 25,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.objectiveStartAt).toBeInstanceOf(Date);
+      expect(result.data.objectiveEndAt).toBeInstanceOf(Date);
+      expect(result.data.progress).toBe(25);
+    }
+  });
+
+  it("rejects an objectiveEndAt earlier than objectiveStartAt", () => {
+    const result = createPlanningItemSchema.safeParse({
+      title: "Bad objective",
+      listId: "list-1",
+      objectiveStartAt: "2026-09-01T00:00:00.000Z",
+      objectiveEndAt: "2026-08-01T00:00:00.000Z",
+    });
+
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(
+        result.error.issues.some(
+          (issue) => issue.path[0] === "objectiveEndAt",
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it("rejects progress outside 0–100", () => {
+    expect(
+      createPlanningItemSchema.safeParse({
+        title: "x",
+        listId: "list-1",
+        progress: 150,
+      }).success,
+    ).toBe(false);
+    expect(
+      createPlanningItemSchema.safeParse({
+        title: "x",
+        listId: "list-1",
+        progress: -1,
+      }).success,
+    ).toBe(false);
+  });
+
   // Requirement 2.1: a point-in-time schedule (a start with no end) is valid.
   it("accepts a point schedule with startAt and no endAt", () => {
     const result = createPlanningItemSchema.safeParse({
@@ -358,5 +411,27 @@ describe("updatePlanningItemSchema", () => {
         (result.data as Record<string, unknown>).reminderSeenAt,
       ).toBeUndefined();
     }
+  });
+
+  // Objective fields are clearable via explicit null on update.
+  it("accepts explicit null for objective timeframe fields to clear them", () => {
+    const result = updatePlanningItemSchema.safeParse({
+      objectiveStartAt: null,
+      objectiveEndAt: null,
+      progress: null,
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.objectiveStartAt).toBeNull();
+      expect(result.data.objectiveEndAt).toBeNull();
+      expect(result.data.progress).toBeNull();
+    }
+  });
+
+  it("rejects progress outside 0–100 on update", () => {
+    expect(updatePlanningItemSchema.safeParse({ progress: 200 }).success).toBe(
+      false,
+    );
   });
 });

@@ -9,6 +9,7 @@ import {
   findOwnedPlanningItem,
   listDueReminders,
   listNotesByUser,
+  listObjectivesByUser,
   listPlanningItemsByUser,
   listRemindersForUser,
   listScheduledItemsByCategory,
@@ -662,6 +663,108 @@ describe("planning-item repository (integration)", () => {
     const row = notes.find((note) => note.id === newerNote.id);
     expect(row?.categoryId).toBeDefined();
     expect(typeof row?.categoryName).toBe("string");
+  });
+
+  it("listObjectivesByUser returns only live objetivo items ordered by deadline (nulls last), excluding tasks/deleted/archived/other users", async () => {
+    const objetivoType = await prisma.itemType.findUniqueOrThrow({
+      where: { key: "objetivo" },
+    });
+    const base = {
+      userId: DEV_USER_ID,
+      description: null,
+      listId,
+      itemTypeId: objetivoType.id,
+      priorityId: null,
+      statusId,
+      dueAt: null,
+    };
+
+    // INCLUDED: two with deadlines (assert asc order) + one with no deadline (last).
+    const laterDeadline = await createPlanningItem({
+      ...base,
+      title: "objective later deadline",
+      objectiveEndAt: new Date("2026-12-31T00:00:00.000Z"),
+    });
+    createdItemIds.push(laterDeadline.id);
+    const soonerDeadline = await createPlanningItem({
+      ...base,
+      title: "objective sooner deadline",
+      objectiveEndAt: new Date("2026-12-01T00:00:00.000Z"),
+    });
+    createdItemIds.push(soonerDeadline.id);
+    const noDeadline = await createPlanningItem({
+      ...base,
+      title: "objective no deadline",
+    });
+    createdItemIds.push(noDeadline.id);
+
+    // EXCLUDED: a task (non-objetivo).
+    const task = await createPlanningItem({
+      userId: DEV_USER_ID,
+      title: "a task, not an objective",
+      description: null,
+      listId,
+      itemTypeId,
+      priorityId: null,
+      statusId,
+      dueAt: null,
+    });
+    createdItemIds.push(task.id);
+
+    // EXCLUDED: deleted / archived objectives.
+    const deleted = await createPlanningItem({
+      ...base,
+      title: "deleted objective",
+      objectiveEndAt: new Date("2026-12-05T00:00:00.000Z"),
+    });
+    createdItemIds.push(deleted.id);
+    await softDeletePlanningItem(deleted.id);
+    const archived = await createPlanningItem({
+      ...base,
+      title: "archived objective",
+      objectiveEndAt: new Date("2026-12-06T00:00:00.000Z"),
+    });
+    createdItemIds.push(archived.id);
+    await updatePlanningItem(archived.id, { archived: true });
+
+    // EXCLUDED: another user's objective.
+    const stranger = await prisma.user.create({
+      data: { email: `objective-stranger-${Date.now()}@test.local` },
+    });
+    throwawayUserIds.push(stranger.id);
+    const strangersObjective = await prisma.planningItem.create({
+      data: {
+        userId: stranger.id,
+        title: "stranger's objective",
+        listId,
+        itemTypeId: objetivoType.id,
+        statusId,
+        objectiveEndAt: new Date("2026-12-02T00:00:00.000Z"),
+      },
+    });
+
+    const objectives = await listObjectivesByUser(DEV_USER_ID);
+    const ids = objectives.map((o) => o.id);
+
+    expect(ids).toContain(soonerDeadline.id);
+    expect(ids).toContain(laterDeadline.id);
+    expect(ids).toContain(noDeadline.id);
+    expect(ids).not.toContain(task.id);
+    expect(ids).not.toContain(deleted.id);
+    expect(ids).not.toContain(archived.id);
+    expect(ids).not.toContain(strangersObjective.id);
+
+    // Deadline ascending, no-deadline last.
+    expect(ids.indexOf(soonerDeadline.id)).toBeLessThan(
+      ids.indexOf(laterDeadline.id),
+    );
+    expect(ids.indexOf(laterDeadline.id)).toBeLessThan(
+      ids.indexOf(noDeadline.id),
+    );
+
+    // Enriched with the owning category.
+    const row = objectives.find((o) => o.id === soonerDeadline.id);
+    expect(row?.categoryId).toBeDefined();
   });
 });
 

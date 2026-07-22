@@ -28,6 +28,12 @@ export const createPlanningItemSchema = z
     // this schema: acknowledgement happens only via the dedicated reminders
     // endpoint, never from a client-supplied payload.
     remindAt: z.coerce.date().optional(),
+    // Objective fields (item type `objetivo`). A dedicated timeframe independent
+    // of `startAt`/`endAt`, so objectives never touch the calendar or the
+    // no-overlap rule. `progress` is a completion percentage (0–100).
+    objectiveStartAt: z.coerce.date().optional(),
+    objectiveEndAt: z.coerce.date().optional(),
+    progress: z.number().int().min(0).max(100).optional(),
   })
   // A schedule must be internally consistent: an end requires a start, and it
   // cannot precede the start. The service re-checks the EFFECTIVE schedule on
@@ -39,7 +45,21 @@ export const createPlanningItemSchema = z
   .refine((data) => !(data.startAt && data.endAt && data.endAt < data.startAt), {
     message: "endAt must be on or after startAt",
     path: ["endAt"],
-  });
+  })
+  // Objective timeframe: end on or after start when both are set. Independent of
+  // the schedule refines above.
+  .refine(
+    (data) =>
+      !(
+        data.objectiveStartAt &&
+        data.objectiveEndAt &&
+        data.objectiveEndAt < data.objectiveStartAt
+      ),
+    {
+      message: "objectiveEndAt must be on or after objectiveStartAt",
+      path: ["objectiveEndAt"],
+    },
+  );
 
 export type CreatePlanningItemInput = z.infer<typeof createPlanningItemSchema>;
 
@@ -79,6 +99,12 @@ export const updatePlanningItemSchema = z.object({
   // deliberately absent: it is server-stamped via the dedicated reminders
   // endpoint and never client-writable through this general update surface.
   remindAt: z.coerce.date().nullable().optional(),
+  // Objective fields — nullable = clearable. The authoritative timeframe check
+  // (`objectiveEndAt >= objectiveStartAt`) runs in the service against the
+  // EFFECTIVE (merged) values.
+  objectiveStartAt: z.coerce.date().nullable().optional(),
+  objectiveEndAt: z.coerce.date().nullable().optional(),
+  progress: z.number().int().min(0).max(100).nullable().optional(),
   archived: z.boolean().optional(),
 });
 

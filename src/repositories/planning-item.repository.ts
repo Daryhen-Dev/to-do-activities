@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { NotFoundError } from "../lib/errors";
 import type { ScheduledItemWithCategory } from "../lib/calendar";
 import type { NoteWithCategory } from "../lib/notes";
+import type { ObjectiveWithCategory } from "../lib/objectives";
 
 /**
  * Sole Prisma import boundary for the planning-item vertical slice. No
@@ -28,6 +29,10 @@ export interface CreatePlanningItemData {
   // Reminder time; omit to fall back to the column default (NULL). A freshly
   // created item is never pre-acknowledged, so `reminderSeenAt` starts NULL.
   remindAt?: Date | null;
+  // Objective fields (item type `objetivo`); omit to fall back to NULL.
+  objectiveStartAt?: Date | null;
+  objectiveEndAt?: Date | null;
+  progress?: number | null;
 }
 
 /**
@@ -53,6 +58,9 @@ export interface UpdatePlanningItemData {
   // schema — acknowledgement goes through `markReminderSeen` / the dedicated
   // reminders endpoint, not the general PATCH.
   reminderSeenAt?: Date | null;
+  objectiveStartAt?: Date | null;
+  objectiveEndAt?: Date | null;
+  progress?: number | null;
   archived?: boolean;
 }
 
@@ -88,6 +96,45 @@ export async function listPlanningItemsByUser(
     where: { userId, deletedAt: null },
     orderBy: { createdAt: "desc" },
   });
+}
+
+/**
+ * The user's objectives (item type `objetivo`) that are live, each enriched with
+ * its owning category — the data source for the Objectives view. Filters by the
+ * item-type KEY (`objetivo`), joins `List → Category`, and flattens to
+ * `ObjectiveWithCategory`. Ordered by deadline (`objectiveEndAt`) ascending with
+ * no-deadline objectives LAST.
+ */
+export async function listObjectivesByUser(
+  userId: string,
+): Promise<ObjectiveWithCategory[]> {
+  const rows = await prisma.planningItem.findMany({
+    where: {
+      userId,
+      deletedAt: null,
+      archived: false,
+      itemType: { key: "objetivo" },
+      list: {
+        deletedAt: null,
+        category: { userId, deletedAt: null },
+      },
+    },
+    include: {
+      list: {
+        select: {
+          category: { select: { id: true, name: true, color: true } },
+        },
+      },
+    },
+    orderBy: { objectiveEndAt: { sort: "asc", nulls: "last" } },
+  });
+
+  return rows.map(({ list, ...item }) => ({
+    ...item,
+    categoryId: list.category.id,
+    categoryName: list.category.name,
+    categoryColor: list.category.color,
+  }));
 }
 
 /**
