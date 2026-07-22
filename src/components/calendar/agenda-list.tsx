@@ -1,6 +1,7 @@
-import { Bell } from "lucide-react";
+import { Bell, Check, Repeat } from "lucide-react";
 
 import type { CalendarEvent } from "@/lib/calendar";
+import { cn } from "@/lib/utils";
 
 /**
  * Presentational agenda list. Renders each day group with a local heading and
@@ -72,7 +73,29 @@ export function AgendaList({ groups }: AgendaListProps) {
                       className="size-3 shrink-0 text-muted-foreground"
                     />
                   ) : null}
-                  <span className="truncate text-sm">{event.title}</span>
+                  {event.kind === "habit" ? (
+                    event.completed ? (
+                      <Check
+                        aria-label="Habit completed"
+                        className="size-3 shrink-0 text-muted-foreground"
+                      />
+                    ) : (
+                      <Repeat
+                        aria-label="Habit"
+                        className="size-3 shrink-0 text-muted-foreground"
+                      />
+                    )
+                  ) : null}
+                  <span
+                    className={cn(
+                      "truncate text-sm",
+                      event.kind === "habit" &&
+                        event.completed &&
+                        "text-muted-foreground line-through",
+                    )}
+                  >
+                    {event.title}
+                  </span>
                 </span>
               </li>
             ))}

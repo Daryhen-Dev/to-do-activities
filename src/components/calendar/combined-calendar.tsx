@@ -8,6 +8,7 @@ import {
   buildMonthGrid,
   buildWeekDays,
   type CalendarEvent,
+  filterHabitLayer,
   filterReminderLayer,
   filterVisibleEvents,
   groupEventsByDay,
@@ -15,8 +16,10 @@ import {
   rangeFor,
   type ScheduledItemWithCategory,
   toCombinedCalendarEvents,
+  toHabitCalendarEvents,
   toReminderCalendarEvents,
 } from "@/lib/calendar";
+import type { HabitOccurrenceDTO } from "@/lib/habits";
 import { rescheduleEvent } from "@/lib/calendar-reschedule";
 import { useCalendarStore } from "@/stores/calendar-store";
 import { useCalendarFilterStore } from "@/stores/calendar-filter-store";
@@ -75,6 +78,7 @@ export function CombinedCalendar() {
   const remindersHidden = useCalendarFilterStore(
     (state) => state.remindersHidden,
   );
+  const habitsHidden = useCalendarFilterStore((state) => state.habitsHidden);
 
   const { from, to } = rangeFor(view, anchorDate);
   const fromIso = from.toISOString();
@@ -98,23 +102,31 @@ export function CombinedCalendar() {
       setLoading(true);
       try {
         const query = `from=${encodeURIComponent(fromIso)}&to=${encodeURIComponent(toIso)}`;
-        // Fetch the scheduled events and the reminder layer in parallel, then
-        // merge them into one event array (reminders carry kind: "reminder").
-        const [scheduledRes, remindersRes] = await Promise.all([
+        // Fetch the scheduled events, the reminder layer, and the habit layer in
+        // parallel, then merge them into one event array (each layer carries its
+        // own `kind`).
+        const [scheduledRes, remindersRes, habitsRes] = await Promise.all([
           fetch(`/api/calendar?${query}`),
           fetch(`/api/calendar/reminders?${query}`),
+          fetch(`/api/calendar/habits?${query}`),
         ]);
-        if (!scheduledRes.ok || !remindersRes.ok) {
+        if (!scheduledRes.ok || !remindersRes.ok || !habitsRes.ok) {
           throw new Error("request failed");
         }
-        const [scheduledRows, reminderRows] = (await Promise.all([
+        const [scheduledRows, reminderRows, habitRows] = (await Promise.all([
           scheduledRes.json(),
           remindersRes.json(),
-        ])) as [ScheduledItemWithCategory[], ScheduledItemWithCategory[]];
+          habitsRes.json(),
+        ])) as [
+          ScheduledItemWithCategory[],
+          ScheduledItemWithCategory[],
+          HabitOccurrenceDTO[],
+        ];
         if (!active) return;
         setEvents([
           ...toCombinedCalendarEvents(scheduledRows),
           ...toReminderCalendarEvents(reminderRows),
+          ...toHabitCalendarEvents(habitRows),
         ]);
       } catch {
         if (active) toast.error("Failed to load the calendar");
@@ -136,11 +148,14 @@ export function CombinedCalendar() {
   // when the Reminders toggle is off.
   const visibleEvents = useMemo(
     () =>
-      filterReminderLayer(
-        filterVisibleEvents(events, hiddenCategoryIds),
-        remindersHidden,
+      filterHabitLayer(
+        filterReminderLayer(
+          filterVisibleEvents(events, hiddenCategoryIds),
+          remindersHidden,
+        ),
+        habitsHidden,
       ),
-    [events, hiddenCategoryIds, remindersHidden],
+    [events, hiddenCategoryIds, remindersHidden, habitsHidden],
   );
 
   const itemTypeById = useMemo(
@@ -225,6 +240,13 @@ export function CombinedCalendar() {
             <div className="text-xs text-muted-foreground">
               <ItemTypeBadge itemType={peekType} />
             </div>
+          ) : null}
+          {peekEvent?.kind === "habit" ? (
+            <p className="text-xs font-medium">
+              {peekEvent.completed
+                ? "✓ Completed on this day"
+                : "Not completed on this day"}
+            </p>
           ) : null}
           {peekEvent?.description ? (
             <p className="text-sm whitespace-pre-wrap">

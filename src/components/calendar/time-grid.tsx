@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bell } from "lucide-react";
+import { Bell, Check, Repeat } from "lucide-react";
 
 import {
   type CalendarEvent,
@@ -133,7 +133,12 @@ function TimedEvent({
   // A reminder is a read-only point marker: never draggable (its time is edited
   // in the task dialog), always peeks on click, and shows a bell + dashed accent.
   const isReminder = event.kind === "reminder";
-  const canDrag = draggable && !isReminder;
+  // A habit occurrence is also a read-only marker (never draggable): its
+  // schedule is set in the habit form, not on the grid. A completed occurrence
+  // is dimmed + struck through with a check.
+  const isHabit = event.kind === "habit";
+  const habitDone = isHabit && event.completed === true;
+  const canDrag = draggable && !isReminder && !isHabit;
 
   return (
     <button
@@ -166,13 +171,20 @@ function TimedEvent({
           ? "border-l-[3px] text-foreground hover:opacity-80"
           : "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         isReminder && "border-dashed",
+        isHabit && "border-dotted",
+        habitDone && "opacity-60 line-through",
         canDrag && "cursor-grab touch-none",
         dragging && "cursor-grabbing select-none shadow-lg",
       )}
     >
       <span className="flex items-center gap-1 truncate font-medium">
-        {isReminder ? (
-          <Bell aria-hidden className="size-3 shrink-0" />
+        {isReminder ? <Bell aria-hidden className="size-3 shrink-0" /> : null}
+        {isHabit ? (
+          habitDone ? (
+            <Check aria-hidden className="size-3 shrink-0" />
+          ) : (
+            <Repeat aria-hidden className="size-3 shrink-0" />
+          )
         ) : null}
         <span className="truncate">{label}</span>
       </span>
@@ -321,6 +333,8 @@ export function TimeGrid({ days, events, onPeek, onReschedule }: TimeGridProps) 
           >
             {layout.allDay.map((event) => {
               const colored = Boolean(event.color);
+              const isHabit = event.kind === "habit";
+              const habitDone = isHabit && event.completed === true;
               return (
                 <button
                   key={event.id}
@@ -336,13 +350,22 @@ export function TimeGrid({ days, events, onPeek, onReschedule }: TimeGridProps) 
                       : undefined
                   }
                   className={cn(
-                    "w-full truncate rounded px-1.5 py-0.5 text-left text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                    "flex w-full items-center gap-1 truncate rounded px-1.5 py-0.5 text-left text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
                     colored
                       ? "border-l-[3px] text-foreground hover:opacity-80"
                       : "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+                    isHabit && "border-dotted",
+                    habitDone && "opacity-60 line-through",
                   )}
                 >
-                  {event.title}
+                  {isHabit ? (
+                    habitDone ? (
+                      <Check aria-hidden className="size-3 shrink-0" />
+                    ) : (
+                      <Repeat aria-hidden className="size-3 shrink-0" />
+                    )
+                  ) : null}
+                  <span className="truncate">{event.title}</span>
                 </button>
               );
             })}

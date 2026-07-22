@@ -21,6 +21,10 @@ interface CalendarFilterState {
   remindersHidden: boolean;
   /** Flips the reminder-layer visibility. */
   toggleReminders: () => void;
+  /** True when the whole habit layer is hidden. Default false (shown). */
+  habitsHidden: boolean;
+  /** Flips the habit-layer visibility. */
+  toggleHabits: () => void;
 }
 
 export const useCalendarFilterStore = create<CalendarFilterState>(
@@ -46,5 +50,9 @@ export const useCalendarFilterStore = create<CalendarFilterState>(
 
     toggleReminders: () =>
       set((state) => ({ remindersHidden: !state.remindersHidden })),
+
+    habitsHidden: false,
+
+    toggleHabits: () => set((state) => ({ habitsHidden: !state.habitsHidden })),
   }),
 );

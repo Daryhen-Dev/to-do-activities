@@ -1,5 +1,6 @@
 import type { PlanningItem } from "@prisma/client";
 import { resolveCategoryColor } from "./category-color";
+import type { HabitOccurrenceDTO } from "./habits";
 
 /**
  * Pure calendar logic — grid construction, range windows, and event bucketing.
@@ -29,11 +30,17 @@ export interface CalendarEvent {
   /** Resolved display color (already run through `resolveCategoryColor`). */
   color?: string;
   /**
-   * Discriminates a reminder marker (a point at `remindAt`) from a scheduled
-   * event. Absent or "scheduled" is the default; "reminder" marks the layer so
-   * the grids can render it distinctly and keep it read-only (non-draggable).
+   * Discriminates layer markers from a scheduled event. Absent or "scheduled"
+   * is the default; "reminder" is a point at `remindAt`; "habit" is a habit
+   * occurrence marker. Non-scheduled kinds render distinctly and are read-only
+   * (non-draggable).
    */
-  kind?: "scheduled" | "reminder";
+  kind?: "scheduled" | "reminder" | "habit";
+  /**
+   * For a habit occurrence marker (`kind === "habit"`): whether that occurrence
+   * is completed. Absent for other kinds.
+   */
+  completed?: boolean;
 }
 
 /**
@@ -295,6 +302,69 @@ export function filterReminderLayer(
 ): CalendarEvent[] {
   if (!hidden) return events;
   return events.filter((event) => event.kind !== "reminder");
+}
+
+/**
+ * Maps expanded habit-occurrence DTOs into `CalendarEvent`s. An occurrence with
+ * a `timeMinutes` becomes a POINT event anchored at that LOCAL time
+ * (`allDay = false`); a null `timeMinutes` becomes an ALL-DAY marker
+ * (`allDay = true`). `endAt = null`, `kind = "habit"`, `completed` is carried
+ * through, and `id = "{habitId}:{date}"` so occurrences of the same habit never
+ * collide as keys. Each carries its `categoryId`, `categoryName`, and a resolved
+ * display `color`. DTOs with an unparseable `date` are dropped. The client
+ * builds the `Date` here so all timezone-sensitive construction stays local.
+ */
+export function toHabitCalendarEvents(
+  rows: HabitOccurrenceDTO[],
+): CalendarEvent[] {
+  const events: CalendarEvent[] = [];
+  for (const row of rows) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(row.date);
+    if (!match) continue;
+    const [, y, m, d] = match;
+    const year = Number(y);
+    const month = Number(m) - 1;
+    const day = Number(d);
+    const allDay = row.timeMinutes == null;
+    const startAt = allDay
+      ? new Date(year, month, day)
+      : new Date(
+          year,
+          month,
+          day,
+          Math.floor(row.timeMinutes! / 60),
+          row.timeMinutes! % 60,
+        );
+    if (Number.isNaN(startAt.getTime())) continue;
+    events.push({
+      id: `${row.habitId}:${row.date}`,
+      title: row.title,
+      startAt,
+      endAt: null,
+      allDay,
+      kind: "habit",
+      completed: row.completed,
+      description: row.description ?? null,
+      itemTypeId: row.itemTypeId,
+      categoryId: row.categoryId,
+      categoryName: row.categoryName,
+      color: resolveCategoryColor(row.categoryColor, row.categoryId),
+    });
+  }
+  return events;
+}
+
+/**
+ * Events with the habit layer removed when `hidden` is true; unchanged when
+ * false. Only `kind === "habit"` events are affected — scheduled and reminder
+ * events are never removed. Drives the single "Habits" toggle in the legend.
+ */
+export function filterHabitLayer(
+  events: CalendarEvent[],
+  hidden: boolean,
+): CalendarEvent[] {
+  if (!hidden) return events;
+  return events.filter((event) => event.kind !== "habit");
 }
 
 /**

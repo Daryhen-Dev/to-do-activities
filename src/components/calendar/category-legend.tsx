@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell } from "lucide-react";
+import { Bell, Repeat } from "lucide-react";
 
 import { resolveCategoryColor } from "@/lib/category-color";
 import { cn } from "@/lib/utils";
@@ -28,6 +28,8 @@ export function CategoryLegend() {
   const toggleReminders = useCalendarFilterStore(
     (state) => state.toggleReminders,
   );
+  const habitsHidden = useCalendarFilterStore((state) => state.habitsHidden);
+  const toggleHabits = useCalendarFilterStore((state) => state.toggleHabits);
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -70,6 +72,21 @@ export function CategoryLegend() {
       >
         <Bell aria-hidden className="size-3" />
         Reminders
+      </button>
+
+      <button
+        type="button"
+        aria-pressed={!habitsHidden}
+        onClick={toggleHabits}
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs transition-opacity focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+          habitsHidden
+            ? "text-muted-foreground line-through opacity-60"
+            : "text-foreground hover:bg-accent",
+        )}
+      >
+        <Repeat aria-hidden className="size-3" />
+        Habits
       </button>
     </div>
   );

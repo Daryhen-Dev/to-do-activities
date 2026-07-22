@@ -157,6 +157,26 @@ export interface HabitWithCompletions extends PlanningItem {
 }
 
 /**
+ * One expanded habit occurrence, serializable for `GET /api/calendar/habits`.
+ * The occurrence `date` is a calendar-date string (`"YYYY-MM-DD"`, local); the
+ * client builds the anchored `Date` from it + `timeMinutes` so all
+ * timezone-sensitive construction stays client-side. `timeMinutes === null`
+ * means an all-day habit.
+ */
+export interface HabitOccurrenceDTO {
+  habitId: string;
+  title: string;
+  description: string | null;
+  itemTypeId: string;
+  date: string;
+  timeMinutes: number | null;
+  categoryId: string;
+  categoryName: string;
+  categoryColor: string | null;
+  completed: boolean;
+}
+
+/**
  * Client-facing, JSON-serializable view of a habit (the shape the Habits view
  * consumes from `GET /api/habits`). Only the fields the UI needs; `rule` carries
  * just the parts the edit form and schedule display require.

@@ -31,6 +31,8 @@ import {
   computeStreak,
   computeWeeklyAdherence,
   dateKey,
+  generateOccurrences,
+  type HabitOccurrenceDTO,
   type HabitWithAdherence,
   isScheduledOn,
   normalizeDate,
@@ -359,6 +361,46 @@ export async function listHabitsForCurrentUser(
       completedToday: completedKeys.has(todayKey),
     };
   });
+}
+
+/**
+ * The current user's habit OCCURRENCES within `[from, to)`, expanded from each
+ * habit's recurrence rule — the data source for the calendar's habit layer.
+ * Resolves the acting user server-side; reuses `listHabitsByUser` (the sole
+ * Prisma boundary, which includes each habit's completions) and the pure
+ * `generateOccurrences`. Emits one flat DTO per `(habit, occurrence)` with the
+ * calendar-date string, the habit's time-of-day (or null for all-day), the
+ * owning category, and whether that occurrence is completed. No category
+ * precheck — the query is already user-scoped (mirrors the reminders range).
+ */
+export async function listHabitOccurrencesForCurrentUserRange(
+  from: Date,
+  to: Date,
+): Promise<HabitOccurrenceDTO[]> {
+  const userId = await getCurrentUserId();
+  const habits = await listHabitsByUser(userId);
+
+  const occurrences: HabitOccurrenceDTO[] = [];
+  for (const habit of habits) {
+    const rule = ruleFromItem(habit);
+    const completedKeys = completedKeysFromRows(habit.completions);
+    for (const occurrence of generateOccurrences(rule, from, to)) {
+      const key = dateKey(occurrence);
+      occurrences.push({
+        habitId: habit.id,
+        title: habit.title,
+        description: habit.description,
+        itemTypeId: habit.itemTypeId,
+        date: key,
+        timeMinutes: habit.recurrenceTimeMinutes,
+        categoryId: habit.categoryId,
+        categoryName: habit.categoryName,
+        categoryColor: habit.categoryColor,
+        completed: completedKeys.has(key),
+      });
+    }
+  }
+  return occurrences;
 }
 
 /**

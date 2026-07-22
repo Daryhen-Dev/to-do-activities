@@ -16,12 +16,16 @@ import {
   toCalendarEvents,
   toCombinedCalendarEvents,
   toReminderCalendarEvents,
+  toHabitCalendarEvents,
   filterReminderLayer,
+  filterHabitLayer,
   filterVisibleEvents,
   type CalendarEvent,
   type ScheduledItemWithCategory,
 } from "./calendar";
+import type { HabitOccurrenceDTO } from "./habits";
 import { CATEGORY_COLOR_PALETTE, resolveCategoryColor } from "./category-color";
+import fc from "fast-check";
 
 /**
  * Exhaustive unit tests for the pure calendar helpers. Every `Date` is built
@@ -1073,5 +1077,157 @@ describe("filterVisibleEvents with reminder events", () => {
       new Set<string>(["cat-hidden"]),
     );
     expect(result.map((e) => e.id)).toEqual(["s"]);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Habit layer: toHabitCalendarEvents + filterHabitLayer (+ category filter).
+// ---------------------------------------------------------------------------
+
+/** Builds a HabitOccurrenceDTO with sensible defaults. */
+function makeOccurrence(
+  over: Partial<HabitOccurrenceDTO> = {},
+): HabitOccurrenceDTO {
+  return {
+    habitId: "h-1",
+    title: "Meditate",
+    description: null,
+    itemTypeId: "it-habito",
+    date: "2026-07-20",
+    timeMinutes: 480,
+    categoryId: "cat-1",
+    categoryName: "Health",
+    categoryColor: "#123456",
+    completed: false,
+    ...over,
+  };
+}
+
+describe("toHabitCalendarEvents", () => {
+  it("maps a timed occurrence to a point event anchored at its local time", () => {
+    const [event] = toHabitCalendarEvents([
+      makeOccurrence({ date: "2026-07-20", timeMinutes: 480 }),
+    ]);
+    expect(event.kind).toBe("habit");
+    expect(event.endAt).toBeNull();
+    expect(event.allDay).toBe(false);
+    expect(event.startAt.getTime()).toBe(new Date(2026, 6, 20, 8, 0).getTime());
+    expect(event.id).toBe("h-1:2026-07-20");
+    expect(event.completed).toBe(false);
+    expect(event.categoryId).toBe("cat-1");
+    expect(event.color).toBe("#123456");
+  });
+
+  it("maps a no-time occurrence to an all-day marker", () => {
+    const [event] = toHabitCalendarEvents([
+      makeOccurrence({ timeMinutes: null }),
+    ]);
+    expect(event.allDay).toBe(true);
+    expect(event.startAt.getTime()).toBe(new Date(2026, 6, 20).getTime());
+  });
+
+  it("carries the completed flag and derives a palette color when categoryColor is null", () => {
+    const [event] = toHabitCalendarEvents([
+      makeOccurrence({ completed: true, categoryColor: null, categoryId: "cat-9" }),
+    ]);
+    expect(event.completed).toBe(true);
+    expect(event.color).toBe(resolveCategoryColor(null, "cat-9"));
+    expect(CATEGORY_COLOR_PALETTE).toContain(event.color);
+  });
+
+  it("drops occurrences with an unparseable date", () => {
+    const events = toHabitCalendarEvents([
+      makeOccurrence({ habitId: "ok", date: "2026-07-20" }),
+      makeOccurrence({ habitId: "bad", date: "20/07/2026" }),
+    ]);
+    expect(events.map((e) => e.id)).toEqual(["ok:2026-07-20"]);
+  });
+
+  // Property 1: mapping shape.
+  it("always yields kind=habit point/all-day events with a stable id (property)", () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 28 }),
+        fc.option(fc.integer({ min: 0, max: 1439 }), { nil: null }),
+        fc.boolean(),
+        (day, timeMinutes, completed) => {
+          const date = `2026-07-${String(day).padStart(2, "0")}`;
+          const [event] = toHabitCalendarEvents([
+            makeOccurrence({ date, timeMinutes, completed }),
+          ]);
+          expect(event.kind).toBe("habit");
+          expect(event.endAt).toBeNull();
+          expect(event.allDay).toBe(timeMinutes == null);
+          expect(event.completed).toBe(completed);
+          expect(event.id).toBe(`h-1:${date}`);
+          expect(event.startAt.getFullYear()).toBe(2026);
+          expect(event.startAt.getDate()).toBe(day);
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+});
+
+describe("filterHabitLayer", () => {
+  const scheduled = makeEvent({ id: "s", startAt: new Date(2026, 6, 20, 9, 0) });
+  const reminder: CalendarEvent = {
+    ...makeEvent({ id: "r", startAt: new Date(2026, 6, 20, 10, 0) }),
+    kind: "reminder",
+  };
+  const habit: CalendarEvent = {
+    ...makeEvent({ id: "h", startAt: new Date(2026, 6, 20, 8, 0) }),
+    kind: "habit",
+  };
+
+  it("returns all events unchanged when not hidden", () => {
+    const events = [scheduled, reminder, habit];
+    expect(filterHabitLayer(events, false)).toEqual(events);
+  });
+
+  it("removes only habit-kind events when hidden (scheduled + reminders kept)", () => {
+    const result = filterHabitLayer([scheduled, reminder, habit], true);
+    expect(result.map((e) => e.id)).toEqual(["s", "r"]);
+  });
+
+  // Property 2: habit-layer filter is exact and scoped.
+  it("hidden drops exactly the habit-kind events (property)", () => {
+    fc.assert(
+      fc.property(
+        fc.array(
+          fc.constantFrom<CalendarEvent["kind"]>("scheduled", "reminder", "habit"),
+          { maxLength: 20 },
+        ),
+        (kinds) => {
+          const events = kinds.map((kind, i) => ({
+            ...makeEvent({ id: `e${i}`, startAt: new Date(2026, 6, 20, 9, 0) }),
+            kind,
+          }));
+          const result = filterHabitLayer(events, true);
+          expect(result.every((e) => e.kind !== "habit")).toBe(true);
+          expect(result).toEqual(events.filter((e) => e.kind !== "habit"));
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+});
+
+describe("filterVisibleEvents with habit events", () => {
+  // Property 3: habit markers respect the per-category filter.
+  it("excludes a habit whose category is hidden", () => {
+    const habitA: CalendarEvent = {
+      ...makeEvent({ id: "hA", startAt: new Date(2026, 6, 20, 8, 0) }),
+      kind: "habit",
+      categoryId: "cat-a",
+    };
+    const habitB: CalendarEvent = {
+      ...makeEvent({ id: "hB", startAt: new Date(2026, 6, 20, 8, 0) }),
+      kind: "habit",
+      categoryId: "cat-b",
+    };
+    const result = filterVisibleEvents([habitA, habitB], new Set(["cat-a"]));
+    expect(result.map((e) => e.id)).toEqual(["hB"]);
   });
 });

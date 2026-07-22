@@ -75,6 +75,7 @@ import {
   deletePlanningItemForCurrentUser,
   getPlanningItemForCurrentUser,
   listDueRemindersForCurrentUser,
+  listHabitOccurrencesForCurrentUserRange,
   listHabitsForCurrentUser,
   listNotesForCurrentUser,
   listObjectivesForCurrentUser,
@@ -1182,5 +1183,84 @@ describe("recurrence-rule validation on create/update", () => {
       updatePlanningItemForCurrentUser("habit-1", { recurrenceDays: [] }),
     ).rejects.toBeInstanceOf(ValidationError);
     expect(mockUpdate).not.toHaveBeenCalled();
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Habit occurrences for the calendar layer (range expansion + completion).
+// ---------------------------------------------------------------------------
+
+describe("listHabitOccurrencesForCurrentUserRange", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("expands each habit's occurrences in the window and marks completion", () => {
+    // Daily habit (all weekdays) at 08:00, one completion on Jul 21.
+    mockListHabitsByUser.mockResolvedValue([
+      habitRow({
+        id: "h-1",
+        title: "Meditate",
+        recurrenceDays: [1, 2, 3, 4, 5, 6, 7],
+        recurrenceTimeMinutes: 480,
+        completions: [{ date: toDbDate(new Date(2026, 6, 21)) }],
+      }),
+    ]);
+
+    return listHabitOccurrencesForCurrentUserRange(
+      new Date(2026, 6, 20),
+      new Date(2026, 6, 23), // [Mon Jul20, Thu Jul23) → 20, 21, 22
+    ).then((occ) => {
+      expect(occ.map((o) => o.date)).toEqual([
+        "2026-07-20",
+        "2026-07-21",
+        "2026-07-22",
+      ]);
+      expect(occ.every((o) => o.habitId === "h-1")).toBe(true);
+      expect(occ.every((o) => o.timeMinutes === 480)).toBe(true);
+      expect(occ.find((o) => o.date === "2026-07-21")?.completed).toBe(true);
+      expect(occ.find((o) => o.date === "2026-07-20")?.completed).toBe(false);
+      expect(occ[0].categoryId).toBe("cat-1");
+    });
+  });
+
+  it("matches generateOccurrences membership (model-based) for an interval habit", async () => {
+    const rule = habitRow({
+      id: "h-2",
+      recurrenceDays: [],
+      recurrenceInterval: 3,
+      recurrenceAnchor: toDbDate(new Date(2026, 6, 20)),
+      recurrenceTimeMinutes: null,
+      createdAt: new Date(2026, 6, 20),
+    });
+    mockListHabitsByUser.mockResolvedValue([rule]);
+
+    const from = new Date(2026, 6, 20);
+    const to = new Date(2026, 6, 30);
+    const occ = await listHabitOccurrencesForCurrentUserRange(from, to);
+
+    // every-3-days from Jul 20: 20, 23, 26, 29
+    expect(occ.map((o) => o.date)).toEqual([
+      "2026-07-20",
+      "2026-07-23",
+      "2026-07-26",
+      "2026-07-29",
+    ]);
+    // no time-of-day → all-day (null timeMinutes)
+    expect(occ.every((o) => o.timeMinutes === null)).toBe(true);
+  });
+
+  it("yields no occurrences for a habit with none in the window", async () => {
+    mockListHabitsByUser.mockResolvedValue([
+      habitRow({ id: "h-3", recurrenceDays: [1] }), // Mondays only
+    ]);
+
+    // A window with no Monday: Tue Jul21 .. Thu Jul23
+    const occ = await listHabitOccurrencesForCurrentUserRange(
+      new Date(2026, 6, 21),
+      new Date(2026, 6, 23),
+    );
+    expect(occ).toEqual([]);
   });
 });

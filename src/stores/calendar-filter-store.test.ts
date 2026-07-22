@@ -48,3 +48,55 @@ describe("calendar-filter-store — reminder layer", () => {
     expect(useCalendarFilterStore.getState().remindersHidden).toBe(false);
   });
 });
+
+
+/**
+ * Habit layer toggle, mirroring the reminder-layer tests: default shown,
+ * flips, and independent of the category and reminder toggles.
+ */
+describe("calendar-filter-store — habit layer", () => {
+  beforeEach(() => {
+    useCalendarFilterStore.setState({
+      hiddenCategoryIds: new Set<string>(),
+      remindersHidden: false,
+      habitsHidden: false,
+    });
+  });
+
+  it("defaults to habits shown (habitsHidden false)", () => {
+    expect(useCalendarFilterStore.getState().habitsHidden).toBe(false);
+  });
+
+  it("toggleHabits flips the flag true → false → true", () => {
+    const { toggleHabits } = useCalendarFilterStore.getState();
+
+    toggleHabits();
+    expect(useCalendarFilterStore.getState().habitsHidden).toBe(true);
+
+    toggleHabits();
+    expect(useCalendarFilterStore.getState().habitsHidden).toBe(false);
+  });
+
+  it("toggling habits does not mutate the reminder flag or hiddenCategoryIds", () => {
+    const { toggle, toggleReminders, toggleHabits } =
+      useCalendarFilterStore.getState();
+
+    toggle("cat-1");
+    toggleReminders();
+    toggleHabits();
+
+    const state = useCalendarFilterStore.getState();
+    expect(state.habitsHidden).toBe(true);
+    expect(state.remindersHidden).toBe(true);
+    expect(state.hiddenCategoryIds.has("cat-1")).toBe(true);
+  });
+
+  it("toggling reminders or a category does not mutate habitsHidden", () => {
+    const { toggle, toggleReminders } = useCalendarFilterStore.getState();
+
+    toggle("cat-1");
+    toggleReminders();
+
+    expect(useCalendarFilterStore.getState().habitsHidden).toBe(false);
+  });
+});

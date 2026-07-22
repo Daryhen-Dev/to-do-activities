@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell } from "lucide-react";
+import { Bell, Check, Repeat } from "lucide-react";
 
 import { type CalendarEvent, eventsOnDay, isSameDay } from "@/lib/calendar";
 import { cn } from "@/lib/utils";
@@ -59,6 +59,10 @@ function EventChip({
   // A reminder is a point marker: a dashed accent + a bell tell it apart from a
   // scheduled block at a glance.
   const isReminder = event.kind === "reminder";
+  // A habit occurrence: a dotted accent + a repeat icon; a completed occurrence
+  // is dimmed and struck through with a check.
+  const isHabit = event.kind === "habit";
+  const habitDone = isHabit && event.completed === true;
   return (
     <button
       type="button"
@@ -75,10 +79,17 @@ function EventChip({
           ? "border-l-[3px] text-foreground hover:opacity-80"
           : "bg-secondary text-secondary-foreground hover:bg-secondary/80",
         isReminder && "border-dashed",
+        isHabit && "border-dotted",
+        habitDone && "opacity-60 line-through",
       )}
     >
-      {isReminder ? (
-        <Bell aria-hidden className="size-3 shrink-0" />
+      {isReminder ? <Bell aria-hidden className="size-3 shrink-0" /> : null}
+      {isHabit ? (
+        habitDone ? (
+          <Check aria-hidden className="size-3 shrink-0" />
+        ) : (
+          <Repeat aria-hidden className="size-3 shrink-0" />
+        )
       ) : null}
       <span className="truncate">{chipLabel(event)}</span>
     </button>
