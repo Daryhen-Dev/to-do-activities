@@ -7,6 +7,7 @@ import {
   ListTodo,
   Pencil,
   Plus,
+  Repeat,
   StickyNote,
   Target,
   Trash2,
@@ -283,6 +284,15 @@ export function AppSidebar({ user, ...props }: AppSidebarProps) {
               >
                 <Target />
                 <span>Objectives</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                isActive={pathname === "/habits"}
+                render={<Link href="/habits" />}
+              >
+                <Repeat />
+                <span>Habits</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>

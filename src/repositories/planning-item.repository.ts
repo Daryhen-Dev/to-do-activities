@@ -4,6 +4,7 @@ import { NotFoundError } from "../lib/errors";
 import type { ScheduledItemWithCategory } from "../lib/calendar";
 import type { NoteWithCategory } from "../lib/notes";
 import type { ObjectiveWithCategory } from "../lib/objectives";
+import type { HabitWithCompletions } from "../lib/habits";
 
 /**
  * Sole Prisma import boundary for the planning-item vertical slice. No
@@ -33,6 +34,13 @@ export interface CreatePlanningItemData {
   objectiveStartAt?: Date | null;
   objectiveEndAt?: Date | null;
   progress?: number | null;
+  // Recurrence fields (item type `habito`); omit to fall back to the column
+  // defaults (`recurrenceDays` → empty array, the rest NULL). `recurrenceDays`
+  // is a non-null scalar list, so an empty array means "no weekday selection".
+  recurrenceDays?: number[];
+  recurrenceTimeMinutes?: number | null;
+  recurrenceInterval?: number | null;
+  recurrenceAnchor?: Date | null;
 }
 
 /**
@@ -61,6 +69,12 @@ export interface UpdatePlanningItemData {
   objectiveStartAt?: Date | null;
   objectiveEndAt?: Date | null;
   progress?: number | null;
+  // Recurrence fields (item type `habito`). `recurrenceDays` is set to an empty
+  // array to clear the weekday selection; the others accept `null` to clear.
+  recurrenceDays?: number[];
+  recurrenceTimeMinutes?: number | null;
+  recurrenceInterval?: number | null;
+  recurrenceAnchor?: Date | null;
   archived?: boolean;
 }
 
@@ -341,6 +355,107 @@ export async function listNotesByUser(
 }
 
 /**
+ * The user's habits (item type `habito`) that are live (not deleted, not
+ * archived), each enriched with its owning category (the section) and its
+ * `HabitCompletion` rows — the data source for the Habits view and its adherence
+ * computation. Filters by the item-type KEY (`habito`), joins `List → Category`,
+ * and `include`s each item's completions (date only). Flattened to
+ * `HabitWithCompletions` so no Prisma relation shape leaks past this layer. This
+ * is the ONLY place `HabitCompletion` rows are read. Ordered by creation
+ * (`createdAt asc`) for a stable list.
+ */
+export async function listHabitsByUser(
+  userId: string,
+): Promise<HabitWithCompletions[]> {
+  const rows = await prisma.planningItem.findMany({
+    where: {
+      userId,
+      deletedAt: null,
+      archived: false,
+      itemType: { key: "habito" },
+      list: {
+        deletedAt: null,
+        category: { userId, deletedAt: null },
+      },
+    },
+    include: {
+      list: {
+        select: {
+          category: { select: { id: true, name: true, color: true } },
+        },
+      },
+      habitCompletions: { select: { date: true } },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  return rows.map(({ list, habitCompletions, ...item }) => ({
+    ...item,
+    categoryId: list.category.id,
+    categoryName: list.category.name,
+    categoryColor: list.category.color,
+    completions: habitCompletions,
+  }));
+}
+
+/**
+ * A single HABIT owned by `userId`, or `null` if it does not exist, is
+ * soft-deleted, belongs to someone else, or is not a `habito`-type item.
+ * Callers (service layer) throw `NotFoundError` on `null` so existence is never
+ * leaked — same pattern as `findOwnedPlanningItem`, plus the item-type filter.
+ */
+export async function findOwnedHabit(
+  userId: string,
+  id: string,
+): Promise<PlanningItem | null> {
+  return prisma.planningItem.findFirst({
+    where: { id, userId, deletedAt: null, itemType: { key: "habito" } },
+  });
+}
+
+/**
+ * Records a completion for one occurrence, keyed by `(planningItemId, date)`.
+ * Idempotent: the unique `(planning_item_id, date)` index makes a duplicate
+ * insert raise Prisma `P2002`, which is swallowed as success so a repeated
+ * mark-complete leaves exactly one row. `date` must be a UTC-midnight `@db.Date`
+ * value (see `toDbDate`). The service-layer ownership + schedule prechecks run
+ * before this.
+ */
+export async function createHabitCompletion(
+  userId: string,
+  planningItemId: string,
+  date: Date,
+): Promise<void> {
+  try {
+    await prisma.habitCompletion.create({
+      data: { userId, planningItemId, date },
+    });
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      return; // already completed — idempotent no-op
+    }
+    throw error;
+  }
+}
+
+/**
+ * Removes the completion for `(planningItemId, date)`. Idempotent: deleting zero
+ * rows is success (a repeated mark-incomplete is a no-op). `date` must be a
+ * UTC-midnight `@db.Date` value (see `toDbDate`).
+ */
+export async function deleteHabitCompletion(
+  planningItemId: string,
+  date: Date,
+): Promise<void> {
+  await prisma.habitCompletion.deleteMany({
+    where: { planningItemId, date },
+  });
+}
+
+/**
  * The first of the user's TIMED (non-all-day) scheduled items whose interval
  * overlaps `[start, end)` — it starts before `end` and ends after `start`, so
  * boundaries that merely touch (e.g. 10–11 and 11–12) do NOT count as a
@@ -454,4 +569,17 @@ export async function findDefaultItemTypeId(): Promise<string | null> {
     orderBy: { sortOrder: "asc" },
   });
   return itemType?.id ?? null;
+}
+
+/**
+ * The `key` of an ItemType by its id, or `null` when the id is unknown. Used by
+ * the service to decide whether an item is a `habito` (and therefore whether the
+ * recurrence-rule validation applies) without leaking the Prisma model.
+ */
+export async function findItemTypeKeyById(id: string): Promise<string | null> {
+  const itemType = await prisma.itemType.findUnique({
+    where: { id },
+    select: { key: true },
+  });
+  return itemType?.key ?? null;
 }

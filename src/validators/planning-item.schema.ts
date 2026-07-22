@@ -1,6 +1,43 @@
 import { z } from "zod";
 
 /**
+ * Recurrence field group (item type `habito`). Field-level validation only:
+ * days are distinct ISO weekdays (1..7, at most 7), interval is an integer
+ * 1..365, time-of-day is minutes-since-midnight (0..1439). The cross-field
+ * "at least one weekday OR an interval" rule and the habit-specific title /
+ * description length bounds are enforced in the service against the EFFECTIVE
+ * (merged) rule, because they only apply when the item type resolves to
+ * `habito` — which the schema cannot determine from `itemTypeId` alone.
+ */
+const recurrenceDaysField = z
+  .array(z.number().int().min(1, "weekday must be 1..7").max(7, "weekday must be 1..7"))
+  .max(7, "at most 7 weekdays")
+  .refine((a) => new Set(a).size === a.length, "weekdays must be distinct");
+
+const recurrenceIntervalField = z
+  .number()
+  .int("interval must be an integer")
+  .min(1, "interval must be at least 1")
+  .max(365, "interval must be at most 365");
+
+const recurrenceTimeMinutesField = z
+  .number()
+  .int("time must be an integer number of minutes")
+  .min(0, "time must be within 00:00..23:59")
+  .max(1439, "time must be within 00:00..23:59");
+
+/**
+ * POST /api/habits/[id]/completions request body contract. The date is a
+ * date-only "YYYY-MM-DD" string, coerced to a local-midnight `Date` in the
+ * service.
+ */
+export const habitCompletionSchema = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "date must be YYYY-MM-DD"),
+});
+
+export type HabitCompletionInput = z.infer<typeof habitCompletionSchema>;
+
+/**
  * POST /api/planning-items request body contract.
  *
  * `userId` is intentionally NOT part of this schema — ownership is always
@@ -34,6 +71,13 @@ export const createPlanningItemSchema = z
     objectiveStartAt: z.coerce.date().optional(),
     objectiveEndAt: z.coerce.date().optional(),
     progress: z.number().int().min(0).max(100).optional(),
+    // Recurrence rule (item type `habito`). Field-level validation here; the
+    // "at least one weekday OR an interval" rule is enforced in the service
+    // against the effective rule. An empty `recurrenceDays` means interval-only.
+    recurrenceDays: recurrenceDaysField.optional(),
+    recurrenceInterval: recurrenceIntervalField.optional(),
+    recurrenceTimeMinutes: recurrenceTimeMinutesField.optional(),
+    recurrenceAnchor: z.coerce.date().optional(),
   })
   // A schedule must be internally consistent: an end requires a start, and it
   // cannot precede the start. The service re-checks the EFFECTIVE schedule on
@@ -105,6 +149,12 @@ export const updatePlanningItemSchema = z.object({
   objectiveStartAt: z.coerce.date().nullable().optional(),
   objectiveEndAt: z.coerce.date().nullable().optional(),
   progress: z.number().int().min(0).max(100).nullable().optional(),
+  // Recurrence rule — nullable = clearable. Clearing the weekday set is an
+  // empty array; the effective-rule check runs in the service.
+  recurrenceDays: recurrenceDaysField.optional(),
+  recurrenceInterval: recurrenceIntervalField.nullable().optional(),
+  recurrenceTimeMinutes: recurrenceTimeMinutesField.nullable().optional(),
+  recurrenceAnchor: z.coerce.date().nullable().optional(),
   archived: z.boolean().optional(),
 });
 

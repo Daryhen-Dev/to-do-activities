@@ -2,12 +2,16 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DEV_USER_ID } from "../lib/dev-user";
 import { prisma } from "../lib/prisma";
 import {
+  createHabitCompletion,
   createPlanningItem,
+  deleteHabitCompletion,
   findDefaultItemTypeId,
   findDefaultStatusId,
   findOverlappingTimedItem,
+  findOwnedHabit,
   findOwnedPlanningItem,
   listDueReminders,
+  listHabitsByUser,
   listNotesByUser,
   listObjectivesByUser,
   listPlanningItemsByUser,
@@ -18,6 +22,7 @@ import {
   softDeletePlanningItem,
   updatePlanningItem,
 } from "./planning-item.repository";
+import { toDbDate } from "../lib/habits";
 
 /**
  * Integration tests against the real, seeded Postgres instance (see
@@ -1309,5 +1314,245 @@ describe("listScheduledItemsForUser (integration)", () => {
 
     expect(ids).not.toContain(softDeleted.id);
     expect(ids).not.toContain(otherUsersItem.id);
+  });
+});
+
+
+/**
+ * Integration tests for the habit repository methods. Provisions a throwaway
+ * list under a seeded category, then exercises `listHabitsByUser`,
+ * `findOwnedHabit`, and the idempotent completion writes. Every row created
+ * here (items, completions cascade with their item, throwaway users) is removed
+ * in `afterAll`.
+ */
+describe("habit repository (integration)", () => {
+  let habitoTypeId: string;
+  let tareaTypeId: string;
+  let statusId: string;
+  let listId: string;
+  const createdItemIds: string[] = [];
+  const throwawayUserIds: string[] = [];
+
+  beforeAll(async () => {
+    const habito = await prisma.itemType.findUniqueOrThrow({
+      where: { key: "habito" },
+    });
+    const tarea = await prisma.itemType.findUniqueOrThrow({
+      where: { key: "tarea" },
+    });
+    const status = await prisma.status.findFirstOrThrow({
+      where: { isDefault: true },
+    });
+    habitoTypeId = habito.id;
+    tareaTypeId = tarea.id;
+    statusId = status.id;
+
+    const category = await prisma.category.findFirstOrThrow({
+      where: { userId: DEV_USER_ID, deletedAt: null },
+    });
+    const list = await prisma.list.create({
+      data: { categoryId: category.id, name: `habit-test-list-${Date.now()}` },
+    });
+    listId = list.id;
+  });
+
+  afterAll(async () => {
+    if (createdItemIds.length > 0) {
+      await prisma.planningItem.deleteMany({
+        where: { id: { in: createdItemIds } },
+      });
+    }
+    if (throwawayUserIds.length > 0) {
+      await prisma.user.deleteMany({ where: { id: { in: throwawayUserIds } } });
+    }
+    if (listId) {
+      await prisma.list.deleteMany({ where: { id: listId } });
+    }
+  });
+
+  it("listHabitsByUser returns only live habito items with category + completions, excluding tasks/deleted/archived/other users", async () => {
+    const base = {
+      userId: DEV_USER_ID,
+      description: null,
+      listId,
+      itemTypeId: habitoTypeId,
+      priorityId: null,
+      statusId,
+      dueAt: null,
+    };
+
+    // INCLUDED: a weekday habit with two completions.
+    const habit = await createPlanningItem({
+      ...base,
+      title: "meditate weekdays",
+      recurrenceDays: [1, 2, 3, 4, 5],
+      recurrenceTimeMinutes: 480,
+    });
+    createdItemIds.push(habit.id);
+    await createHabitCompletion(DEV_USER_ID, habit.id, toDbDate(new Date(2026, 6, 20)));
+    await createHabitCompletion(DEV_USER_ID, habit.id, toDbDate(new Date(2026, 6, 21)));
+
+    // INCLUDED: an interval-only habit with no completions.
+    const intervalHabit = await createPlanningItem({
+      ...base,
+      title: "water plants every 3 days",
+      recurrenceInterval: 3,
+      recurrenceAnchor: toDbDate(new Date(2026, 6, 1)),
+    });
+    createdItemIds.push(intervalHabit.id);
+
+    // EXCLUDED: a task.
+    const task = await createPlanningItem({
+      ...base,
+      title: "not a habit",
+      itemTypeId: tareaTypeId,
+    });
+    createdItemIds.push(task.id);
+
+    // EXCLUDED: deleted / archived habits.
+    const deleted = await createPlanningItem({
+      ...base,
+      title: "deleted habit",
+      recurrenceDays: [1],
+    });
+    createdItemIds.push(deleted.id);
+    await softDeletePlanningItem(deleted.id);
+    const archived = await createPlanningItem({
+      ...base,
+      title: "archived habit",
+      recurrenceDays: [2],
+    });
+    createdItemIds.push(archived.id);
+    await updatePlanningItem(archived.id, { archived: true });
+
+    // EXCLUDED: another user's habit.
+    const stranger = await prisma.user.create({
+      data: { email: `habit-stranger-${Date.now()}@test.local` },
+    });
+    throwawayUserIds.push(stranger.id);
+    const strangersHabit = await prisma.planningItem.create({
+      data: {
+        userId: stranger.id,
+        title: "stranger's habit",
+        listId,
+        itemTypeId: habitoTypeId,
+        statusId,
+        recurrenceDays: [1, 2, 3],
+      },
+    });
+
+    const habits = await listHabitsByUser(DEV_USER_ID);
+    const ids = habits.map((h) => h.id);
+
+    expect(ids).toContain(habit.id);
+    expect(ids).toContain(intervalHabit.id);
+    expect(ids).not.toContain(task.id);
+    expect(ids).not.toContain(deleted.id);
+    expect(ids).not.toContain(archived.id);
+    expect(ids).not.toContain(strangersHabit.id);
+
+    // Enriched with the owning category + completions included.
+    const withCompletions = habits.find((h) => h.id === habit.id);
+    expect(withCompletions?.categoryId).toBeDefined();
+    expect(typeof withCompletions?.categoryName).toBe("string");
+    expect(withCompletions?.completions).toHaveLength(2);
+    expect(withCompletions?.recurrenceDays).toEqual([1, 2, 3, 4, 5]);
+
+    const intervalRow = habits.find((h) => h.id === intervalHabit.id);
+    expect(intervalRow?.completions).toEqual([]);
+    expect(intervalRow?.recurrenceInterval).toBe(3);
+  });
+
+  it("createHabitCompletion is idempotent (duplicate insert swallows P2002)", async () => {
+    const habit = await createPlanningItem({
+      userId: DEV_USER_ID,
+      title: "idempotent completion habit",
+      description: null,
+      listId,
+      itemTypeId: habitoTypeId,
+      priorityId: null,
+      statusId,
+      dueAt: null,
+      recurrenceDays: [1, 2, 3, 4, 5, 6, 7],
+    });
+    createdItemIds.push(habit.id);
+
+    const date = toDbDate(new Date(2026, 6, 22));
+    await createHabitCompletion(DEV_USER_ID, habit.id, date);
+    await createHabitCompletion(DEV_USER_ID, habit.id, date); // duplicate
+
+    const count = await prisma.habitCompletion.count({
+      where: { planningItemId: habit.id, date },
+    });
+    expect(count).toBe(1);
+  });
+
+  it("deleteHabitCompletion removes an existing completion and is a no-op when none exists", async () => {
+    const habit = await createPlanningItem({
+      userId: DEV_USER_ID,
+      title: "delete completion habit",
+      description: null,
+      listId,
+      itemTypeId: habitoTypeId,
+      priorityId: null,
+      statusId,
+      dueAt: null,
+      recurrenceDays: [1, 2, 3, 4, 5, 6, 7],
+    });
+    createdItemIds.push(habit.id);
+
+    const date = toDbDate(new Date(2026, 6, 23));
+    await createHabitCompletion(DEV_USER_ID, habit.id, date);
+    await deleteHabitCompletion(habit.id, date);
+    expect(
+      await prisma.habitCompletion.count({
+        where: { planningItemId: habit.id, date },
+      }),
+    ).toBe(0);
+
+    // Deleting again is a no-op (does not throw).
+    await expect(deleteHabitCompletion(habit.id, date)).resolves.toBeUndefined();
+  });
+
+  it("findOwnedHabit returns a habit, and null for a task, a stranger, or a deleted habit", async () => {
+    const habit = await createPlanningItem({
+      userId: DEV_USER_ID,
+      title: "owned habit",
+      description: null,
+      listId,
+      itemTypeId: habitoTypeId,
+      priorityId: null,
+      statusId,
+      dueAt: null,
+      recurrenceDays: [1],
+    });
+    createdItemIds.push(habit.id);
+
+    expect((await findOwnedHabit(DEV_USER_ID, habit.id))?.id).toBe(habit.id);
+
+    // A task is not a habit.
+    const task = await createPlanningItem({
+      userId: DEV_USER_ID,
+      title: "owned task",
+      description: null,
+      listId,
+      itemTypeId: tareaTypeId,
+      priorityId: null,
+      statusId,
+      dueAt: null,
+    });
+    createdItemIds.push(task.id);
+    expect(await findOwnedHabit(DEV_USER_ID, task.id)).toBeNull();
+
+    // A stranger cannot resolve it.
+    const stranger = await prisma.user.create({
+      data: { email: `find-habit-stranger-${Date.now()}@test.local` },
+    });
+    throwawayUserIds.push(stranger.id);
+    expect(await findOwnedHabit(stranger.id, habit.id)).toBeNull();
+
+    // A soft-deleted habit resolves to null.
+    await softDeletePlanningItem(habit.id);
+    expect(await findOwnedHabit(DEV_USER_ID, habit.id)).toBeNull();
   });
 });

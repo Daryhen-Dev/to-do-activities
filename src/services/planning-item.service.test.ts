@@ -11,12 +11,17 @@ vi.mock("../lib/current-user", () => ({
 }));
 
 vi.mock("../repositories/planning-item.repository", () => ({
+  createHabitCompletion: vi.fn(),
   createPlanningItem: vi.fn(),
+  deleteHabitCompletion: vi.fn(),
   findDefaultItemTypeId: vi.fn(),
   findDefaultStatusId: vi.fn(),
+  findItemTypeKeyById: vi.fn(),
   findOverlappingTimedItem: vi.fn(),
+  findOwnedHabit: vi.fn(),
   findOwnedPlanningItem: vi.fn(),
   listDueReminders: vi.fn(),
+  listHabitsByUser: vi.fn(),
   listNotesByUser: vi.fn(),
   listObjectivesByUser: vi.fn(),
   listPlanningItemsByUser: vi.fn(),
@@ -43,12 +48,17 @@ vi.mock("../repositories/category.repository", () => ({
 import { findOwnedCategory } from "../repositories/category.repository";
 import { findOwnedList } from "../repositories/list.repository";
 import {
+  createHabitCompletion,
   createPlanningItem,
+  deleteHabitCompletion,
   findDefaultItemTypeId,
   findDefaultStatusId,
+  findItemTypeKeyById,
   findOverlappingTimedItem,
+  findOwnedHabit,
   findOwnedPlanningItem,
   listDueReminders,
+  listHabitsByUser,
   listNotesByUser,
   listObjectivesByUser,
   listPlanningItemsByUser,
@@ -65,12 +75,14 @@ import {
   deletePlanningItemForCurrentUser,
   getPlanningItemForCurrentUser,
   listDueRemindersForCurrentUser,
+  listHabitsForCurrentUser,
   listNotesForCurrentUser,
   listObjectivesForCurrentUser,
   listPlanningItemsForCurrentUser,
   listRemindersForCurrentUserRange,
   listScheduledItemsForCategory,
   listScheduledItemsForCurrentUserRange,
+  setHabitCompletionForCurrentUser,
   updatePlanningItemForCurrentUser,
 } from "./planning-item.service";
 
@@ -137,6 +149,10 @@ describe("createPlanningItemForCurrentUser", () => {
       objectiveStartAt: null,
       objectiveEndAt: null,
       progress: null,
+      recurrenceDays: [],
+      recurrenceTimeMinutes: null,
+      recurrenceInterval: null,
+      recurrenceAnchor: null,
     });
     expect(result).toBe(created);
   });
@@ -976,5 +992,195 @@ describe("deletePlanningItemForCurrentUser", () => {
       deletePlanningItemForCurrentUser("missing"),
     ).rejects.toThrow(NotFoundError);
     expect(mockSoftDelete).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Habits: adherence read + completion toggle + recurrence-rule validation.
+// ---------------------------------------------------------------------------
+
+import { toDbDate, type HabitWithCompletions } from "../lib/habits";
+
+const mockListHabitsByUser = vi.mocked(listHabitsByUser);
+const mockFindOwnedHabit = vi.mocked(findOwnedHabit);
+const mockCreateHabitCompletion = vi.mocked(createHabitCompletion);
+const mockDeleteHabitCompletion = vi.mocked(deleteHabitCompletion);
+const mockFindItemTypeKeyById = vi.mocked(findItemTypeKeyById);
+
+/** Minimal habit row shaped like the repository's `HabitWithCompletions`. */
+function habitRow(
+  overrides: Partial<HabitWithCompletions> = {},
+): HabitWithCompletions {
+  return {
+    id: "habit-1",
+    userId: DEV_USER_ID,
+    title: "Meditate",
+    description: null,
+    createdAt: new Date(2026, 0, 1),
+    recurrenceDays: [1, 2, 3, 4, 5, 6, 7],
+    recurrenceInterval: null,
+    recurrenceAnchor: null,
+    recurrenceTimeMinutes: 480,
+    categoryId: "cat-1",
+    categoryName: "Salud",
+    categoryColor: null,
+    completions: [],
+    ...overrides,
+  } as unknown as HabitWithCompletions;
+}
+
+describe("listHabitsForCurrentUser", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("computes streak, weekly adherence, and scheduled/completed-today flags", async () => {
+    const now = new Date(2026, 6, 20); // Mon Jul 20, 2026
+    mockListHabitsByUser.mockResolvedValue([
+      habitRow({ completions: [{ date: toDbDate(new Date(2026, 6, 20)) }] }),
+    ]);
+
+    const [habit] = await listHabitsForCurrentUser(now);
+
+    expect(habit.scheduledToday).toBe(true);
+    expect(habit.completedToday).toBe(true);
+    expect(habit.streak).toBe(1);
+    // A daily habit's current week (Mon..Sun) has 7 scheduled occurrences.
+    expect(habit.weekly).toEqual({ completed: 1, total: 7 });
+    // The `completions` array is not leaked in the view model.
+    expect("completions" in habit).toBe(false);
+  });
+
+  it("reports zero adherence for a habit with no completions", async () => {
+    const now = new Date(2026, 6, 20);
+    mockListHabitsByUser.mockResolvedValue([habitRow()]);
+
+    const [habit] = await listHabitsForCurrentUser(now);
+
+    expect(habit.streak).toBe(0);
+    expect(habit.completedToday).toBe(false);
+    expect(habit.weekly).toEqual({ completed: 0, total: 7 });
+  });
+});
+
+describe("setHabitCompletionForCurrentUser", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("throws NotFoundError when the habit is not owned (or not a habit)", async () => {
+    mockFindOwnedHabit.mockResolvedValue(null);
+
+    await expect(
+      setHabitCompletionForCurrentUser("nope", "2026-07-20", true),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    expect(mockCreateHabitCompletion).not.toHaveBeenCalled();
+  });
+
+  it("rejects a date the rule does not schedule with a ValidationError", async () => {
+    // Monday-only habit; 2026-07-21 is a Tuesday.
+    mockFindOwnedHabit.mockResolvedValue(
+      habitRow({ recurrenceDays: [1] }) as unknown as PlanningItem,
+    );
+
+    await expect(
+      setHabitCompletionForCurrentUser("habit-1", "2026-07-21", true),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(mockCreateHabitCompletion).not.toHaveBeenCalled();
+  });
+
+  it("records a completion for a scheduled date when done=true", async () => {
+    mockFindOwnedHabit.mockResolvedValue(
+      habitRow({ recurrenceDays: [1] }) as unknown as PlanningItem,
+    );
+
+    await setHabitCompletionForCurrentUser("habit-1", "2026-07-20", true); // Monday
+
+    expect(mockCreateHabitCompletion).toHaveBeenCalledWith(
+      "dev-user-000000000000000000000",
+      "habit-1",
+      toDbDate(new Date(2026, 6, 20)),
+    );
+    expect(mockDeleteHabitCompletion).not.toHaveBeenCalled();
+  });
+
+  it("removes a completion for a scheduled date when done=false", async () => {
+    mockFindOwnedHabit.mockResolvedValue(
+      habitRow({ recurrenceDays: [1] }) as unknown as PlanningItem,
+    );
+
+    await setHabitCompletionForCurrentUser("habit-1", "2026-07-20", false);
+
+    expect(mockDeleteHabitCompletion).toHaveBeenCalledWith(
+      "habit-1",
+      toDbDate(new Date(2026, 6, 20)),
+    );
+    expect(mockCreateHabitCompletion).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the error and writes no partial state when the completion write fails", async () => {
+    mockFindOwnedHabit.mockResolvedValue(
+      habitRow({ recurrenceDays: [1] }) as unknown as PlanningItem,
+    );
+    mockCreateHabitCompletion.mockRejectedValue(new Error("db down"));
+
+    await expect(
+      setHabitCompletionForCurrentUser("habit-1", "2026-07-20", true),
+    ).rejects.toThrow("db down");
+  });
+});
+
+describe("recurrence-rule validation on create/update", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("rejects creating a habit with neither a weekday nor an interval", async () => {
+    mockFindDefaultStatusId.mockResolvedValue("status-default");
+    mockFindOwnedList.mockResolvedValue(ownedList);
+    mockFindItemTypeKeyById.mockResolvedValue("habito");
+
+    await expect(
+      createPlanningItemForCurrentUser({
+        title: "empty rule habit",
+        listId: "list-1",
+        itemTypeId: "habito-type",
+        recurrenceDays: [],
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it("accepts creating a habit with a valid weekday rule", async () => {
+    mockFindDefaultStatusId.mockResolvedValue("status-default");
+    mockFindOwnedList.mockResolvedValue(ownedList);
+    mockFindItemTypeKeyById.mockResolvedValue("habito");
+    mockCreate.mockResolvedValue({ id: "h1" } as PlanningItem);
+
+    await createPlanningItemForCurrentUser({
+      title: "valid habit",
+      listId: "list-1",
+      itemTypeId: "habito-type",
+      recurrenceDays: [1, 3, 5],
+      recurrenceTimeMinutes: 480,
+    });
+
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    const arg = mockCreate.mock.calls[0][0];
+    expect(arg.recurrenceDays).toEqual([1, 3, 5]);
+  });
+
+  it("leaves the prior rule unchanged when a PATCH would clear it to empty", async () => {
+    // Existing habit is weekday-only; the patch clears the days to [] with no
+    // interval → the effective rule is empty → reject, no update.
+    mockFindOwned.mockResolvedValue(
+      habitRow({ recurrenceDays: [1, 2, 3], recurrenceInterval: null }) as unknown as PlanningItem,
+    );
+    mockFindItemTypeKeyById.mockResolvedValue("habito");
+
+    await expect(
+      updatePlanningItemForCurrentUser("habit-1", { recurrenceDays: [] }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(mockUpdate).not.toHaveBeenCalled();
   });
 });

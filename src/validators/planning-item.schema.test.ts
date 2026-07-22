@@ -435,3 +435,162 @@ describe("updatePlanningItemSchema", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Recurrence fields (item type `habito`) — field-level validation.
+// Property-based rejection classes + acceptance. The cross-field "at least one
+// weekday OR an interval" rule and habit title/description bounds live in the
+// service (validated against the effective rule), not here.
+// ---------------------------------------------------------------------------
+
+import fc from "fast-check";
+import { habitCompletionSchema } from "./planning-item.schema";
+
+describe("recurrence fields on createPlanningItemSchema", () => {
+  const base = { title: "Meditate", listId: "list-1" };
+
+  it("accepts a valid weekday-only recurrence rule", () => {
+    const result = createPlanningItemSchema.safeParse({
+      ...base,
+      recurrenceDays: [1, 3, 5],
+      recurrenceTimeMinutes: 480,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a valid interval-only recurrence rule", () => {
+    const result = createPlanningItemSchema.safeParse({
+      ...base,
+      recurrenceDays: [],
+      recurrenceInterval: 3,
+      recurrenceTimeMinutes: 0,
+      recurrenceAnchor: "2026-07-20",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  // Property 2 (acceptance half): any field-valid rule parses.
+  it("accepts any field-valid recurrence rule", () => {
+    fc.assert(
+      fc.property(
+        fc.uniqueArray(fc.integer({ min: 1, max: 7 }), { maxLength: 7 }),
+        fc.option(fc.integer({ min: 1, max: 365 }), { nil: undefined }),
+        fc.integer({ min: 0, max: 1439 }),
+        (days, interval, time) => {
+          const result = createPlanningItemSchema.safeParse({
+            ...base,
+            recurrenceDays: days,
+            ...(interval !== undefined ? { recurrenceInterval: interval } : {}),
+            recurrenceTimeMinutes: time,
+          });
+          expect(result.success).toBe(true);
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+
+  // Property 4: invalid weekday sets are rejected.
+  it("rejects weekday values outside 1..7, duplicates, or more than 7 entries", () => {
+    fc.assert(
+      fc.property(
+        fc.oneof(
+          // out-of-range value
+          fc.array(fc.integer({ min: 8, max: 20 }), { minLength: 1, maxLength: 3 }),
+          fc.array(fc.integer({ min: -5, max: 0 }), { minLength: 1, maxLength: 3 }),
+          // duplicates
+          fc.constant([1, 1]),
+          fc.constant([2, 3, 3]),
+          // more than 7 entries
+          fc.constant([1, 2, 3, 4, 5, 6, 7, 1]),
+        ),
+        (days) => {
+          const result = createPlanningItemSchema.safeParse({
+            ...base,
+            recurrenceDays: days,
+          });
+          expect(result.success).toBe(false);
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+
+  // Property 5: out-of-range intervals are rejected.
+  it("rejects non-integer or out-of-range intervals", () => {
+    fc.assert(
+      fc.property(
+        fc.oneof(
+          fc.integer({ min: -100, max: 0 }),
+          fc.integer({ min: 366, max: 5000 }),
+          fc.double({ min: 1.1, max: 364.9, noNaN: true }).filter((n) => !Number.isInteger(n)),
+        ),
+        (interval) => {
+          const result = createPlanningItemSchema.safeParse({
+            ...base,
+            recurrenceInterval: interval,
+          });
+          expect(result.success).toBe(false);
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+
+  // Property 6: out-of-range times-of-day are rejected.
+  it("rejects times-of-day outside 0..1439 minutes", () => {
+    fc.assert(
+      fc.property(
+        fc.oneof(
+          fc.integer({ min: -1000, max: -1 }),
+          fc.integer({ min: 1440, max: 100000 }),
+        ),
+        (time) => {
+          const result = createPlanningItemSchema.safeParse({
+            ...base,
+            recurrenceTimeMinutes: time,
+          });
+          expect(result.success).toBe(false);
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+});
+
+describe("recurrence fields on updatePlanningItemSchema", () => {
+  it("accepts clearing interval/time/anchor with null and clearing days with []", () => {
+    const result = updatePlanningItemSchema.safeParse({
+      recurrenceDays: [],
+      recurrenceInterval: null,
+      recurrenceTimeMinutes: null,
+      recurrenceAnchor: null,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("still enforces field ranges on update", () => {
+    const result = updatePlanningItemSchema.safeParse({
+      recurrenceInterval: 0,
+    });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe("habitCompletionSchema", () => {
+  it("accepts a YYYY-MM-DD date", () => {
+    expect(habitCompletionSchema.safeParse({ date: "2026-07-20" }).success).toBe(
+      true,
+    );
+  });
+
+  it("rejects a malformed date", () => {
+    for (const date of ["2026-7-20", "20-07-2026", "not-a-date", "2026/07/20", ""]) {
+      expect(habitCompletionSchema.safeParse({ date }).success).toBe(false);
+    }
+  });
+
+  it("rejects a missing date", () => {
+    expect(habitCompletionSchema.safeParse({}).success).toBe(false);
+  });
+});

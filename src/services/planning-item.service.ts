@@ -2,12 +2,17 @@ import type { PlanningItem } from "@prisma/client";
 import { getCurrentUserId } from "../lib/current-user";
 import { NotFoundError, ValidationError } from "../lib/errors";
 import {
+  createHabitCompletion,
   createPlanningItem,
+  deleteHabitCompletion,
   findDefaultItemTypeId,
   findDefaultStatusId,
+  findItemTypeKeyById,
   findOverlappingTimedItem,
+  findOwnedHabit,
   findOwnedPlanningItem,
   listDueReminders,
+  listHabitsByUser,
   listNotesByUser,
   listObjectivesByUser,
   listPlanningItemsByUser,
@@ -21,12 +26,84 @@ import {
 import type { ScheduledItemWithCategory } from "../lib/calendar";
 import type { NoteWithCategory } from "../lib/notes";
 import type { ObjectiveWithCategory } from "../lib/objectives";
+import {
+  completedKeysFromRows,
+  computeStreak,
+  computeWeeklyAdherence,
+  dateKey,
+  type HabitWithAdherence,
+  isScheduledOn,
+  normalizeDate,
+  normalizeDays,
+  ruleFromItem,
+  toDbDate,
+} from "../lib/habits";
 import { findOwnedList } from "../repositories/list.repository";
 import { findOwnedCategory } from "../repositories/category.repository";
 import type {
   CreatePlanningItemInput,
   UpdatePlanningItemInput,
 } from "../validators/planning-item.schema";
+
+/** Item-type key for habits; recurrence validation applies only to these. */
+const HABIT_ITEM_TYPE_KEY = "habito";
+/** Habit-specific title / description length bounds (Requirement 9.6). */
+const HABIT_TITLE_MAX = 200;
+const HABIT_DESCRIPTION_MAX = 2000;
+
+/**
+ * Enforces the recurrence rule for a habit: at least one weekday OR a valid
+ * "every N days" interval must be present, field ranges hold (defensive — zod
+ * already checks the transport edge, but a partial PATCH merges stored values),
+ * and the habit-specific title / description length bounds are respected.
+ * Callers pass the EFFECTIVE values (for updates, the stored row merged with the
+ * patch), so an invalid rule is rejected before any write and the prior rule is
+ * retained.
+ */
+function validateRecurrenceRule(rule: {
+  days: number[];
+  interval: number | null;
+  timeMinutes: number | null;
+  title: string;
+  description: string | null;
+}): void {
+  const days = normalizeDays(rule.days);
+  const hasInterval = rule.interval != null;
+
+  if (days.length === 0 && !hasInterval) {
+    throw new ValidationError(
+      "A habit requires at least one weekday or a recurrence interval.",
+    );
+  }
+  if (
+    hasInterval &&
+    (!Number.isInteger(rule.interval) ||
+      (rule.interval as number) < 1 ||
+      (rule.interval as number) > 365)
+  ) {
+    throw new ValidationError("recurrence interval must be an integer 1..365");
+  }
+  if (
+    rule.timeMinutes != null &&
+    (!Number.isInteger(rule.timeMinutes) ||
+      rule.timeMinutes < 0 ||
+      rule.timeMinutes > 1439)
+  ) {
+    throw new ValidationError(
+      "recurrence time-of-day must be within 00:00..23:59",
+    );
+  }
+  if (rule.title.length > HABIT_TITLE_MAX) {
+    throw new ValidationError(
+      `title must be at most ${HABIT_TITLE_MAX} characters`,
+    );
+  }
+  if (rule.description && rule.description.length > HABIT_DESCRIPTION_MAX) {
+    throw new ValidationError(
+      `description must be at most ${HABIT_DESCRIPTION_MAX} characters`,
+    );
+  }
+}
 
 /**
  * Enforces schedule consistency: an `endAt` requires a `startAt`, and it may
@@ -133,6 +210,20 @@ export async function createPlanningItemForCurrentUser(
     input.objectiveEndAt ?? null,
   );
 
+  // Habits validate their recurrence rule. A habit never derives `startAt` from
+  // the rule, so it never enters the calendar or the no-overlap check above
+  // (Requirement 1.8).
+  const isHabit = (await findItemTypeKeyById(itemTypeId)) === HABIT_ITEM_TYPE_KEY;
+  if (isHabit) {
+    validateRecurrenceRule({
+      days: input.recurrenceDays ?? [],
+      interval: input.recurrenceInterval ?? null,
+      timeMinutes: input.recurrenceTimeMinutes ?? null,
+      title: input.title,
+      description: input.description ?? null,
+    });
+  }
+
   return createPlanningItem({
     userId,
     title: input.title,
@@ -149,6 +240,10 @@ export async function createPlanningItemForCurrentUser(
     objectiveStartAt: input.objectiveStartAt ?? null,
     objectiveEndAt: input.objectiveEndAt ?? null,
     progress: input.progress ?? null,
+    recurrenceDays: input.recurrenceDays ?? [],
+    recurrenceTimeMinutes: input.recurrenceTimeMinutes ?? null,
+    recurrenceInterval: input.recurrenceInterval ?? null,
+    recurrenceAnchor: input.recurrenceAnchor ?? null,
   });
 }
 
@@ -233,6 +328,79 @@ export async function listObjectivesForCurrentUser(): Promise<
 > {
   const userId = await getCurrentUserId();
   return listObjectivesByUser(userId);
+}
+
+/**
+ * The current user's habits (item type `habito`), each enriched with its owning
+ * category and its computed adherence — the data source for the Habits view.
+ * Resolves the acting user server-side; `now` is injected (defaults to the
+ * server clock) so streak/weekly and the scheduled/completed-today flags are
+ * deterministic. Streak and weekly adherence are computed from the completion
+ * set versus the schedule — never from `progress` (Requirements 5.7, 6.6).
+ * Create/update/delete of the habit row reuse the generic planning-item service
+ * functions; only this read is habit-specific.
+ */
+export async function listHabitsForCurrentUser(
+  now: Date = new Date(),
+): Promise<HabitWithAdherence[]> {
+  const userId = await getCurrentUserId();
+  const rows = await listHabitsByUser(userId);
+  const todayKey = dateKey(normalizeDate(now));
+
+  return rows.map(({ completions, ...item }) => {
+    const rule = ruleFromItem(item);
+    const completedKeys = completedKeysFromRows(completions);
+    return {
+      ...item,
+      rule,
+      streak: computeStreak(rule, completedKeys, now),
+      weekly: computeWeeklyAdherence(rule, completedKeys, now),
+      scheduledToday: isScheduledOn(rule, now),
+      completedToday: completedKeys.has(todayKey),
+    };
+  });
+}
+
+/**
+ * Marks (or unmarks) one occurrence of an owned habit complete for a normalized
+ * date. Ownership is prechecked (`findOwnedHabit` → `NotFoundError` when absent,
+ * foreign, or not a habit — Requirement 4.6); the date must be one the rule
+ * actually schedules (`ValidationError` otherwise — Requirement 4.5). The
+ * completion write is idempotent by construction (create swallows the unique
+ * violation; delete of a missing row is a no-op — Requirements 4.1–4.4). The
+ * date is parsed as a LOCAL calendar day (to match the schedule) and stored as a
+ * UTC-midnight `@db.Date` (see `toDbDate`).
+ */
+export async function setHabitCompletionForCurrentUser(
+  id: string,
+  dateStr: string,
+  done: boolean,
+): Promise<void> {
+  const userId = await getCurrentUserId();
+
+  const habit = await findOwnedHabit(userId, id);
+  if (!habit) {
+    throw new NotFoundError("habit not found");
+  }
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!match) {
+    throw new ValidationError("date must be YYYY-MM-DD");
+  }
+  const [, y, m, d] = match;
+  const localDate = new Date(Number(y), Number(m) - 1, Number(d));
+
+  const rule = ruleFromItem(habit);
+  if (!isScheduledOn(rule, localDate)) {
+    throw new ValidationError("date is not a scheduled occurrence of this habit");
+  }
+
+  const dbDate = toDbDate(localDate);
+  if (done) {
+    await createHabitCompletion(userId, id, dbDate);
+  } else {
+    await deleteHabitCompletion(id, dbDate);
+  }
 }
 
 /**
@@ -348,6 +516,36 @@ export async function updatePlanningItemForCurrentUser(
       : existing.objectiveEndAt;
   validateObjectiveTimeframe(effectiveObjectiveStartAt, effectiveObjectiveEndAt);
 
+  // Validate the EFFECTIVE recurrence rule when the item is (or becomes) a
+  // habit. The stored row is overlaid with the patch, so a partial PATCH is
+  // validated against the persisted rule and an invalid rule leaves it
+  // unchanged (Requirements 1.3, 1.5, 1.7).
+  const effectiveItemTypeId =
+    input.itemTypeId !== undefined ? input.itemTypeId : existing.itemTypeId;
+  const isHabit =
+    (await findItemTypeKeyById(effectiveItemTypeId)) === HABIT_ITEM_TYPE_KEY;
+  if (isHabit) {
+    validateRecurrenceRule({
+      days:
+        input.recurrenceDays !== undefined
+          ? input.recurrenceDays
+          : existing.recurrenceDays,
+      interval:
+        input.recurrenceInterval !== undefined
+          ? input.recurrenceInterval
+          : existing.recurrenceInterval,
+      timeMinutes:
+        input.recurrenceTimeMinutes !== undefined
+          ? input.recurrenceTimeMinutes
+          : existing.recurrenceTimeMinutes,
+      title: input.title !== undefined ? input.title : existing.title,
+      description:
+        input.description !== undefined
+          ? input.description
+          : existing.description,
+    });
+  }
+
   return updatePlanningItem(id, {
     ...(input.title !== undefined ? { title: input.title } : {}),
     ...(input.description !== undefined
@@ -384,6 +582,18 @@ export async function updatePlanningItemForCurrentUser(
       ? { objectiveEndAt: input.objectiveEndAt }
       : {}),
     ...(input.progress !== undefined ? { progress: input.progress } : {}),
+    ...(input.recurrenceDays !== undefined
+      ? { recurrenceDays: input.recurrenceDays }
+      : {}),
+    ...(input.recurrenceTimeMinutes !== undefined
+      ? { recurrenceTimeMinutes: input.recurrenceTimeMinutes }
+      : {}),
+    ...(input.recurrenceInterval !== undefined
+      ? { recurrenceInterval: input.recurrenceInterval }
+      : {}),
+    ...(input.recurrenceAnchor !== undefined
+      ? { recurrenceAnchor: input.recurrenceAnchor }
+      : {}),
     ...(input.archived !== undefined ? { archived: input.archived } : {}),
   });
 }
