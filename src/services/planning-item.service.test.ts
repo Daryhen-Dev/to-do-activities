@@ -21,6 +21,7 @@ vi.mock("../repositories/planning-item.repository", () => ({
   findOwnedHabit: vi.fn(),
   findOwnedPlanningItem: vi.fn(),
   listDueReminders: vi.fn(),
+  listRecurringReminders: vi.fn(),
   listHabitsByUser: vi.fn(),
   listNotesByUser: vi.fn(),
   listObjectivesByUser: vi.fn(),
@@ -58,6 +59,7 @@ import {
   findOwnedHabit,
   findOwnedPlanningItem,
   listDueReminders,
+  listRecurringReminders,
   listHabitsByUser,
   listNotesByUser,
   listObjectivesByUser,
@@ -76,6 +78,7 @@ import {
   getPlanningItemForCurrentUser,
   listDueRemindersForCurrentUser,
   listHabitOccurrencesForCurrentUserRange,
+  listReminderOccurrencesForCurrentUserRange,
   listHabitsForCurrentUser,
   listNotesForCurrentUser,
   listObjectivesForCurrentUser,
@@ -100,6 +103,7 @@ const mockListScheduledForUser = vi.mocked(listScheduledItemsForUser);
 const mockFindOwnedCategory = vi.mocked(findOwnedCategory);
 const mockFindOverlap = vi.mocked(findOverlappingTimedItem);
 const mockListDueReminders = vi.mocked(listDueReminders);
+const mockListRecurringReminders = vi.mocked(listRecurringReminders);
 const mockMarkReminderSeen = vi.mocked(markReminderSeen);
 const mockListRemindersForUser = vi.mocked(listRemindersForUser);
 const mockListNotesByUser = vi.mocked(listNotesByUser);
@@ -927,9 +931,13 @@ describe("listDueRemindersForCurrentUser", () => {
     vi.clearAllMocks();
   });
 
-  it("delegates to the repository with the resolved user and a now Date", async () => {
-    const items = [{ id: "r-1" }, { id: "r-2" }] as PlanningItem[];
+  it("returns the one-shot due reminders when there are no recurring ones", async () => {
+    const items = [
+      { id: "r-1", remindAt: new Date(2026, 6, 20, 9, 0) },
+      { id: "r-2", remindAt: new Date(2026, 6, 20, 10, 0) },
+    ] as PlanningItem[];
     mockListDueReminders.mockResolvedValue(items);
+    mockListRecurringReminders.mockResolvedValue([]);
 
     const result = await listDueRemindersForCurrentUser();
 
@@ -937,7 +945,60 @@ describe("listDueRemindersForCurrentUser", () => {
     const [userId, now] = mockListDueReminders.mock.calls[0];
     expect(userId).toBe(DEV_USER_ID);
     expect(now).toBeInstanceOf(Date);
-    expect(result).toBe(items);
+    expect(result.map((r) => r.id)).toEqual(["r-1", "r-2"]);
+  });
+
+  it("merges a due recurring reminder, stamping remindAt with its current occurrence", async () => {
+    mockListDueReminders.mockResolvedValue([]);
+    // A daily 09:00 recurring reminder, never dismissed → due now.
+    mockListRecurringReminders.mockResolvedValue([
+      {
+        id: "rec-1",
+        title: "Stand up",
+        recurrenceDays: [1, 2, 3, 4, 5, 6, 7],
+        recurrenceInterval: null,
+        recurrenceAnchor: null,
+        recurrenceTimeMinutes: 540,
+        reminderSeenAt: null,
+        createdAt: new Date(2026, 0, 1),
+        categoryId: "cat-1",
+        categoryName: "Work",
+        categoryColor: null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any,
+    ]);
+
+    const result = await listDueRemindersForCurrentUser();
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe("rec-1");
+    // remindAt was overwritten with a concrete occurrence instant (09:00).
+    expect(result[0].remindAt).toBeInstanceOf(Date);
+    expect(result[0].remindAt?.getHours()).toBe(9);
+  });
+
+  it("omits a recurring reminder whose current occurrence was already dismissed", async () => {
+    mockListDueReminders.mockResolvedValue([]);
+    mockListRecurringReminders.mockResolvedValue([
+      {
+        id: "rec-2",
+        title: "Already dismissed",
+        recurrenceDays: [1, 2, 3, 4, 5, 6, 7],
+        recurrenceInterval: null,
+        recurrenceAnchor: null,
+        recurrenceTimeMinutes: 540,
+        // dismissed just now → watermark covers today's occurrence.
+        reminderSeenAt: new Date(),
+        createdAt: new Date(2026, 0, 1),
+        categoryId: "cat-1",
+        categoryName: "Work",
+        categoryColor: null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any,
+    ]);
+
+    const result = await listDueRemindersForCurrentUser();
+    expect(result).toEqual([]);
   });
 });
 
@@ -1259,6 +1320,60 @@ describe("listHabitOccurrencesForCurrentUserRange", () => {
     // A window with no Monday: Tue Jul21 .. Thu Jul23
     const occ = await listHabitOccurrencesForCurrentUserRange(
       new Date(2026, 6, 21),
+      new Date(2026, 6, 23),
+    );
+    expect(occ).toEqual([]);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Recurring reminders: occurrence expansion for the calendar layer.
+// ---------------------------------------------------------------------------
+
+describe("listReminderOccurrencesForCurrentUserRange", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("expands each recurring reminder's occurrences within the window", async () => {
+    mockListRecurringReminders.mockResolvedValue([
+      {
+        id: "rec-1",
+        title: "Stand up",
+        description: null,
+        itemTypeId: "it-recordatorio",
+        recurrenceDays: [1, 2, 3, 4, 5, 6, 7],
+        recurrenceInterval: null,
+        recurrenceAnchor: null,
+        recurrenceTimeMinutes: 540,
+        createdAt: new Date(2026, 0, 1),
+        categoryId: "cat-1",
+        categoryName: "Work",
+        categoryColor: "#123456",
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      } as any,
+    ]);
+
+    const occ = await listReminderOccurrencesForCurrentUserRange(
+      new Date(2026, 6, 20),
+      new Date(2026, 6, 23), // [Mon Jul20, Thu Jul23) → 20, 21, 22
+    );
+
+    expect(occ.map((o) => o.date)).toEqual([
+      "2026-07-20",
+      "2026-07-21",
+      "2026-07-22",
+    ]);
+    expect(occ.every((o) => o.reminderId === "rec-1")).toBe(true);
+    expect(occ.every((o) => o.timeMinutes === 540)).toBe(true);
+    expect(occ[0].categoryColor).toBe("#123456");
+  });
+
+  it("returns empty when the user has no recurring reminders", async () => {
+    mockListRecurringReminders.mockResolvedValue([]);
+    const occ = await listReminderOccurrencesForCurrentUserRange(
+      new Date(2026, 6, 20),
       new Date(2026, 6, 23),
     );
     expect(occ).toEqual([]);

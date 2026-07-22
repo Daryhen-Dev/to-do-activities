@@ -19,8 +19,10 @@ import {
   toCombinedCalendarEvents,
   toHabitCalendarEvents,
   toReminderCalendarEvents,
+  toReminderOccurrenceCalendarEvents,
 } from "@/lib/calendar";
 import type { HabitOccurrenceDTO } from "@/lib/habits";
+import type { ReminderOccurrenceDTO } from "@/lib/reminders";
 import { Button } from "@/components/ui/button";
 import { rescheduleEvent } from "@/lib/calendar-reschedule";
 import { useCalendarStore } from "@/stores/calendar-store";
@@ -107,28 +109,39 @@ export function CombinedCalendar() {
         // Fetch the scheduled events, the reminder layer, and the habit layer in
         // parallel, then merge them into one event array (each layer carries its
         // own `kind`).
-        const [scheduledRes, remindersRes, habitsRes] = await Promise.all([
-          fetch(`/api/calendar?${query}`),
-          fetch(`/api/calendar/reminders?${query}`),
-          fetch(`/api/calendar/habits?${query}`),
-        ]);
-        if (!scheduledRes.ok || !remindersRes.ok || !habitsRes.ok) {
+        const [scheduledRes, remindersRes, habitsRes, reminderOccRes] =
+          await Promise.all([
+            fetch(`/api/calendar?${query}`),
+            fetch(`/api/calendar/reminders?${query}`),
+            fetch(`/api/calendar/habits?${query}`),
+            fetch(`/api/calendar/reminder-occurrences?${query}`),
+          ]);
+        if (
+          !scheduledRes.ok ||
+          !remindersRes.ok ||
+          !habitsRes.ok ||
+          !reminderOccRes.ok
+        ) {
           throw new Error("request failed");
         }
-        const [scheduledRows, reminderRows, habitRows] = (await Promise.all([
-          scheduledRes.json(),
-          remindersRes.json(),
-          habitsRes.json(),
-        ])) as [
-          ScheduledItemWithCategory[],
-          ScheduledItemWithCategory[],
-          HabitOccurrenceDTO[],
-        ];
+        const [scheduledRows, reminderRows, habitRows, reminderOccRows] =
+          (await Promise.all([
+            scheduledRes.json(),
+            remindersRes.json(),
+            habitsRes.json(),
+            reminderOccRes.json(),
+          ])) as [
+            ScheduledItemWithCategory[],
+            ScheduledItemWithCategory[],
+            HabitOccurrenceDTO[],
+            ReminderOccurrenceDTO[],
+          ];
         if (!active) return;
         setEvents([
           ...toCombinedCalendarEvents(scheduledRows),
           ...toReminderCalendarEvents(reminderRows),
           ...toHabitCalendarEvents(habitRows),
+          ...toReminderOccurrenceCalendarEvents(reminderOccRows),
         ]);
       } catch {
         if (active) toast.error("Failed to load the calendar");

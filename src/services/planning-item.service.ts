@@ -13,6 +13,7 @@ import {
   findOwnedPlanningItem,
   listDueReminders,
   listHabitsByUser,
+  listRecurringReminders,
   listNotesByUser,
   listObjectivesByUser,
   listPlanningItemsByUser,
@@ -40,6 +41,11 @@ import {
   ruleFromItem,
   toDbDate,
 } from "../lib/habits";
+import {
+  currentReminderOccurrence,
+  isRecurringReminderDue,
+  type ReminderOccurrenceDTO,
+} from "../lib/reminders";
 import { findOwnedList } from "../repositories/list.repository";
 import { findOwnedCategory } from "../repositories/category.repository";
 import type {
@@ -47,34 +53,32 @@ import type {
   UpdatePlanningItemInput,
 } from "../validators/planning-item.schema";
 
-/** Item-type key for habits; recurrence validation applies only to these. */
+/** Item-type key for habits; recurrence validation always applies to these. */
 const HABIT_ITEM_TYPE_KEY = "habito";
+/** Item-type key for reminders; recurrence applies only when a rule is present. */
+const REMINDER_ITEM_TYPE_KEY = "recordatorio";
 /** Habit-specific title / description length bounds (Requirement 9.6). */
 const HABIT_TITLE_MAX = 200;
 const HABIT_DESCRIPTION_MAX = 2000;
 
 /**
- * Enforces the recurrence rule for a habit: at least one weekday OR a valid
- * "every N days" interval must be present, field ranges hold (defensive — zod
- * already checks the transport edge, but a partial PATCH merges stored values),
- * and the habit-specific title / description length bounds are respected.
- * Callers pass the EFFECTIVE values (for updates, the stored row merged with the
- * patch), so an invalid rule is rejected before any write and the prior rule is
- * retained.
+ * Enforces a structured recurrence rule (shared by habits and recurring
+ * reminders): at least one weekday OR a valid "every N days" interval must be
+ * present, and field ranges hold (defensive — zod checks the transport edge, but
+ * a partial PATCH merges stored values). Callers pass the EFFECTIVE values, so an
+ * invalid rule is rejected before any write and the prior rule is retained.
  */
 function validateRecurrenceRule(rule: {
   days: number[];
   interval: number | null;
   timeMinutes: number | null;
-  title: string;
-  description: string | null;
 }): void {
   const days = normalizeDays(rule.days);
   const hasInterval = rule.interval != null;
 
   if (days.length === 0 && !hasInterval) {
     throw new ValidationError(
-      "A habit requires at least one weekday or a recurrence interval.",
+      "A recurrence rule requires at least one weekday or an interval.",
     );
   }
   if (
@@ -95,16 +99,28 @@ function validateRecurrenceRule(rule: {
       "recurrence time-of-day must be within 00:00..23:59",
     );
   }
-  if (rule.title.length > HABIT_TITLE_MAX) {
+}
+
+/** Habit-specific title / description length bounds (Requirement 9.6). */
+function validateHabitText(title: string, description: string | null): void {
+  if (title.length > HABIT_TITLE_MAX) {
     throw new ValidationError(
       `title must be at most ${HABIT_TITLE_MAX} characters`,
     );
   }
-  if (rule.description && rule.description.length > HABIT_DESCRIPTION_MAX) {
+  if (description && description.length > HABIT_DESCRIPTION_MAX) {
     throw new ValidationError(
       `description must be at most ${HABIT_DESCRIPTION_MAX} characters`,
     );
   }
+}
+
+/** True when a create/update payload carries a recurrence rule (days or interval). */
+function recurrenceRulePresent(
+  days: number[] | undefined,
+  interval: number | null | undefined,
+): boolean {
+  return (days?.length ?? 0) > 0 || interval != null;
 }
 
 /**
@@ -212,18 +228,23 @@ export async function createPlanningItemForCurrentUser(
     input.objectiveEndAt ?? null,
   );
 
-  // Habits validate their recurrence rule. A habit never derives `startAt` from
-  // the rule, so it never enters the calendar or the no-overlap check above
-  // (Requirement 1.8).
-  const isHabit = (await findItemTypeKeyById(itemTypeId)) === HABIT_ITEM_TYPE_KEY;
-  if (isHabit) {
-    validateRecurrenceRule({
-      days: input.recurrenceDays ?? [],
-      interval: input.recurrenceInterval ?? null,
-      timeMinutes: input.recurrenceTimeMinutes ?? null,
-      title: input.title,
-      description: input.description ?? null,
-    });
+  // Habits always validate their recurrence rule (a habit never derives
+  // `startAt` from the rule — Requirement 1.8). A reminder validates its rule
+  // ONLY when one is present (otherwise it stays a one-shot `remindAt`).
+  const itemTypeKey = await findItemTypeKeyById(itemTypeId);
+  const rule = {
+    days: input.recurrenceDays ?? [],
+    interval: input.recurrenceInterval ?? null,
+    timeMinutes: input.recurrenceTimeMinutes ?? null,
+  };
+  if (itemTypeKey === HABIT_ITEM_TYPE_KEY) {
+    validateRecurrenceRule(rule);
+    validateHabitText(input.title, input.description ?? null);
+  } else if (
+    itemTypeKey === REMINDER_ITEM_TYPE_KEY &&
+    recurrenceRulePresent(input.recurrenceDays, input.recurrenceInterval)
+  ) {
+    validateRecurrenceRule(rule);
   }
 
   return createPlanningItem({
@@ -477,7 +498,68 @@ export async function getPlanningItemForCurrentUser(
  */
 export async function listDueRemindersForCurrentUser(): Promise<PlanningItem[]> {
   const userId = await getCurrentUserId();
-  return listDueReminders(userId, new Date());
+  const now = new Date();
+
+  // One-shot reminders: the existing SQL predicate (remindAt <= now, not seen,
+  // no recurrence rule → these have a remindAt and no rule).
+  const oneShot = await listDueReminders(userId, now);
+
+  // Recurring reminders: due is computed from the rule + the `reminderSeenAt`
+  // watermark. A due recurring reminder is returned with its `remindAt`
+  // overwritten by its current occurrence instant, so the bell renders it
+  // through the existing one-shot display path.
+  const recurring = await listRecurringReminders(userId);
+  const recurringDue: PlanningItem[] = [];
+  for (const row of recurring) {
+    const rule = ruleFromItem(row);
+    if (isRecurringReminderDue(rule, row.reminderSeenAt, now)) {
+      recurringDue.push({
+        ...row,
+        remindAt: currentReminderOccurrence(rule, now),
+      });
+    }
+  }
+
+  // Merge soonest-first (a null remindAt sorts last, though due rows always have one).
+  return [...oneShot, ...recurringDue].sort(
+    (a, b) =>
+      (a.remindAt?.getTime() ?? Number.POSITIVE_INFINITY) -
+      (b.remindAt?.getTime() ?? Number.POSITIVE_INFINITY),
+  );
+}
+
+/**
+ * The current user's RECURRING-reminder occurrences within `[from, to)`, expanded
+ * from each reminder's recurrence rule — the data source for the calendar's
+ * recurring-reminder markers. Resolves the acting user server-side; reuses
+ * `listRecurringReminders` (the sole Prisma boundary) and the pure
+ * `generateOccurrences`. Mirrors `listHabitOccurrencesForCurrentUserRange`.
+ */
+export async function listReminderOccurrencesForCurrentUserRange(
+  from: Date,
+  to: Date,
+): Promise<ReminderOccurrenceDTO[]> {
+  const userId = await getCurrentUserId();
+  const reminders = await listRecurringReminders(userId);
+
+  const occurrences: ReminderOccurrenceDTO[] = [];
+  for (const reminder of reminders) {
+    const rule = ruleFromItem(reminder);
+    for (const occurrence of generateOccurrences(rule, from, to)) {
+      occurrences.push({
+        reminderId: reminder.id,
+        title: reminder.title,
+        description: reminder.description,
+        itemTypeId: reminder.itemTypeId,
+        date: dateKey(occurrence),
+        timeMinutes: reminder.recurrenceTimeMinutes,
+        categoryId: reminder.categoryId,
+        categoryName: reminder.categoryName,
+        categoryColor: reminder.categoryColor,
+      });
+    }
+  }
+  return occurrences;
 }
 
 /**
@@ -564,28 +646,32 @@ export async function updatePlanningItemForCurrentUser(
   // unchanged (Requirements 1.3, 1.5, 1.7).
   const effectiveItemTypeId =
     input.itemTypeId !== undefined ? input.itemTypeId : existing.itemTypeId;
-  const isHabit =
-    (await findItemTypeKeyById(effectiveItemTypeId)) === HABIT_ITEM_TYPE_KEY;
-  if (isHabit) {
-    validateRecurrenceRule({
-      days:
-        input.recurrenceDays !== undefined
-          ? input.recurrenceDays
-          : existing.recurrenceDays,
-      interval:
-        input.recurrenceInterval !== undefined
-          ? input.recurrenceInterval
-          : existing.recurrenceInterval,
-      timeMinutes:
-        input.recurrenceTimeMinutes !== undefined
-          ? input.recurrenceTimeMinutes
-          : existing.recurrenceTimeMinutes,
-      title: input.title !== undefined ? input.title : existing.title,
-      description:
-        input.description !== undefined
-          ? input.description
-          : existing.description,
-    });
+  const effectiveItemTypeKey = await findItemTypeKeyById(effectiveItemTypeId);
+  const effectiveRule = {
+    days:
+      input.recurrenceDays !== undefined
+        ? input.recurrenceDays
+        : existing.recurrenceDays,
+    interval:
+      input.recurrenceInterval !== undefined
+        ? input.recurrenceInterval
+        : existing.recurrenceInterval,
+    timeMinutes:
+      input.recurrenceTimeMinutes !== undefined
+        ? input.recurrenceTimeMinutes
+        : existing.recurrenceTimeMinutes,
+  };
+  if (effectiveItemTypeKey === HABIT_ITEM_TYPE_KEY) {
+    validateRecurrenceRule(effectiveRule);
+    validateHabitText(
+      input.title !== undefined ? input.title : existing.title,
+      input.description !== undefined ? input.description : existing.description,
+    );
+  } else if (
+    effectiveItemTypeKey === REMINDER_ITEM_TYPE_KEY &&
+    recurrenceRulePresent(effectiveRule.days, effectiveRule.interval)
+  ) {
+    validateRecurrenceRule(effectiveRule);
   }
 
   return updatePlanningItem(id, {

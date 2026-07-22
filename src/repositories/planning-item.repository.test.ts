@@ -15,6 +15,7 @@ import {
   listNotesByUser,
   listObjectivesByUser,
   listPlanningItemsByUser,
+  listRecurringReminders,
   listRemindersForUser,
   listScheduledItemsByCategory,
   listScheduledItemsForUser,
@@ -1554,5 +1555,134 @@ describe("habit repository (integration)", () => {
     // A soft-deleted habit resolves to null.
     await softDeletePlanningItem(habit.id);
     expect(await findOwnedHabit(DEV_USER_ID, habit.id)).toBeNull();
+  });
+});
+
+
+/**
+ * Integration tests for `listRecurringReminders`: returns only live
+ * `recordatorio` items that carry a recurrence rule, user-scoped, excluding
+ * one-shot / deleted / archived / other users, each enriched with its category.
+ */
+describe("listRecurringReminders (integration)", () => {
+  let recordatorioTypeId: string;
+  let statusId: string;
+  let listId: string;
+  const createdItemIds: string[] = [];
+  const throwawayUserIds: string[] = [];
+
+  beforeAll(async () => {
+    const recordatorio = await prisma.itemType.findUniqueOrThrow({
+      where: { key: "recordatorio" },
+    });
+    const status = await prisma.status.findFirstOrThrow({
+      where: { isDefault: true },
+    });
+    recordatorioTypeId = recordatorio.id;
+    statusId = status.id;
+
+    const category = await prisma.category.findFirstOrThrow({
+      where: { userId: DEV_USER_ID, deletedAt: null },
+    });
+    const list = await prisma.list.create({
+      data: { categoryId: category.id, name: `rec-rem-test-list-${Date.now()}` },
+    });
+    listId = list.id;
+  });
+
+  afterAll(async () => {
+    if (createdItemIds.length > 0) {
+      await prisma.planningItem.deleteMany({
+        where: { id: { in: createdItemIds } },
+      });
+    }
+    if (throwawayUserIds.length > 0) {
+      await prisma.user.deleteMany({ where: { id: { in: throwawayUserIds } } });
+    }
+    if (listId) {
+      await prisma.list.deleteMany({ where: { id: listId } });
+    }
+  });
+
+  it("returns only live recurring recordatorio items, excluding one-shot/deleted/archived/other users", async () => {
+    const base = {
+      userId: DEV_USER_ID,
+      description: null,
+      listId,
+      itemTypeId: recordatorioTypeId,
+      priorityId: null,
+      statusId,
+      dueAt: null,
+    };
+
+    // INCLUDED: weekday rule + interval rule.
+    const weekdayRule = await createPlanningItem({
+      ...base,
+      title: "recurring by weekday",
+      recurrenceDays: [1, 3, 5],
+      recurrenceTimeMinutes: 540,
+    });
+    createdItemIds.push(weekdayRule.id);
+    const intervalRule = await createPlanningItem({
+      ...base,
+      title: "recurring by interval",
+      recurrenceInterval: 3,
+    });
+    createdItemIds.push(intervalRule.id);
+
+    // EXCLUDED: one-shot reminder (remindAt, no rule).
+    const oneShot = await createPlanningItem({
+      ...base,
+      title: "one-shot reminder",
+      remindAt: new Date("2026-07-20T09:00:00.000Z"),
+    });
+    createdItemIds.push(oneShot.id);
+
+    // EXCLUDED: deleted / archived recurring.
+    const deleted = await createPlanningItem({
+      ...base,
+      title: "deleted recurring",
+      recurrenceDays: [2],
+    });
+    createdItemIds.push(deleted.id);
+    await softDeletePlanningItem(deleted.id);
+    const archived = await createPlanningItem({
+      ...base,
+      title: "archived recurring",
+      recurrenceDays: [4],
+    });
+    createdItemIds.push(archived.id);
+    await updatePlanningItem(archived.id, { archived: true });
+
+    // EXCLUDED: another user's recurring reminder.
+    const stranger = await prisma.user.create({
+      data: { email: `rec-rem-stranger-${Date.now()}@test.local` },
+    });
+    throwawayUserIds.push(stranger.id);
+    const strangersRecurring = await prisma.planningItem.create({
+      data: {
+        userId: stranger.id,
+        title: "stranger's recurring",
+        listId,
+        itemTypeId: recordatorioTypeId,
+        statusId,
+        recurrenceDays: [1, 2, 3],
+      },
+    });
+
+    const recurring = await listRecurringReminders(DEV_USER_ID);
+    const ids = recurring.map((r) => r.id);
+
+    expect(ids).toContain(weekdayRule.id);
+    expect(ids).toContain(intervalRule.id);
+    expect(ids).not.toContain(oneShot.id);
+    expect(ids).not.toContain(deleted.id);
+    expect(ids).not.toContain(archived.id);
+    expect(ids).not.toContain(strangersRecurring.id);
+
+    const row = recurring.find((r) => r.id === weekdayRule.id);
+    expect(row?.categoryId).toBeDefined();
+    expect(typeof row?.categoryName).toBe("string");
+    expect(row?.recurrenceDays).toEqual([1, 3, 5]);
   });
 });

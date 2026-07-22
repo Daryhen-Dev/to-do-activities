@@ -35,9 +35,39 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
+import { hmToMinutes, minutesToHm } from "@/lib/habits";
 
 /** Sentinel select value for "no priority" (maps to `null` on submit). */
 const NO_PRIORITY = "none";
+
+/** Item-type key whose reminders can recur. */
+const REMINDER_KEY = "recordatorio";
+
+/** Monday-first ISO weekday buttons (value 1..7) for the repeat control. */
+const WEEKDAYS: { value: number; label: string }[] = [
+  { value: 1, label: "Monday" },
+  { value: 2, label: "Tuesday" },
+  { value: 3, label: "Wednesday" },
+  { value: 4, label: "Thursday" },
+  { value: 5, label: "Friday" },
+  { value: 6, label: "Saturday" },
+  { value: 7, label: "Sunday" },
+];
+
+/** minutes-since-midnight -> "HH:mm" for a time input ("" when null). */
+function minutesToTimeValue(min: number | null): string {
+  if (min == null) return "";
+  const { hours, minutes } = minutesToHm(min);
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+/** "HH:mm" -> minutes-since-midnight; "" -> null. */
+function timeValueToMinutes(value: string): number | null {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(value);
+  if (!match) return null;
+  return hmToMinutes(Number(match[1]), Number(match[2]));
+}
 
 const editTaskSchema = z
   .object({
@@ -61,7 +91,23 @@ const editTaskSchema = z
     // Reminder datetime-local. Empty string means "no reminder". Independent of
     // the schedule, so it is not part of the start/end refines below.
     remindAt: z.string(),
+    // Optional recurrence for a reminder (ignored for other item types). A rule
+    // is "present" when a weekday is selected or an interval is set; then the
+    // reminder recurs and `remindAt` is cleared. Interval/time kept as strings
+    // (the repo's z.coerce.number()/react-hook-form gotcha), parsed on submit.
+    recurrenceDays: z.array(z.number().int().min(1).max(7)),
+    recurrenceTime: z.string(),
+    recurrenceInterval: z.string(),
   })
+  // A provided interval must be a whole number 1..365.
+  .refine(
+    (data) => {
+      if (data.recurrenceInterval.trim() === "") return true;
+      const n = Number(data.recurrenceInterval);
+      return Number.isInteger(n) && n >= 1 && n <= 365;
+    },
+    { message: "Interval must be a whole number 1–365", path: ["recurrenceInterval"] },
+  )
   // An end requires a start.
   .refine((data) => !(data.endAt !== "" && data.startAt === ""), {
     message: "Set a start before an end",
@@ -92,6 +138,9 @@ export interface TaskEditPayload {
   endAt?: string | null;
   allDay?: boolean;
   remindAt?: string | null;
+  recurrenceDays?: number[];
+  recurrenceTimeMinutes?: number | null;
+  recurrenceInterval?: number | null;
 }
 
 interface TaskEditDialogProps {
@@ -187,6 +236,10 @@ export function TaskEditDialog({
       ? toDateValue(item.endAt)
       : toDateTimeLocalValue(item.endAt),
     remindAt: toDateTimeLocalValue(item.remindAt),
+    recurrenceDays: [...(item.recurrenceDays ?? [])].sort((a, b) => a - b),
+    recurrenceTime: minutesToTimeValue(item.recurrenceTimeMinutes),
+    recurrenceInterval:
+      item.recurrenceInterval != null ? String(item.recurrenceInterval) : "",
   });
 
   const form = useForm<EditTaskValues>({
@@ -203,6 +256,18 @@ export function TaskEditDialog({
   }, [open, item]);
 
   const allDay = useWatch({ control: form.control, name: "allDay" });
+  const selectedTypeId = useWatch({ control: form.control, name: "itemTypeId" });
+  const isReminderType =
+    itemTypes.find((type) => type.id === selectedTypeId)?.key === REMINDER_KEY;
+  const watchedDays = useWatch({ control: form.control, name: "recurrenceDays" });
+  const watchedInterval = useWatch({
+    control: form.control,
+    name: "recurrenceInterval",
+  });
+  // A recurring reminder rule is active → its `remindAt` one-shot field is moot.
+  const recurrenceActive =
+    isReminderType &&
+    ((watchedDays?.length ?? 0) > 0 || (watchedInterval?.trim() ?? "") !== "");
 
   /**
    * Reformats the current start/end values between date and datetime-local
@@ -226,7 +291,15 @@ export function TaskEditDialog({
     const startAt = toIsoUtc(values.startAt, values.allDay);
     // Clearing the start clears the whole schedule.
     const endAt = startAt === null ? null : toIsoUtc(values.endAt, values.allDay);
-    const succeeded = await onSubmit({
+    const isReminder =
+      itemTypes.find((type) => type.id === values.itemTypeId)?.key ===
+      REMINDER_KEY;
+    const rulePresent =
+      isReminder &&
+      (values.recurrenceDays.length > 0 ||
+        values.recurrenceInterval.trim() !== "");
+
+    const payload: TaskEditPayload = {
       title: values.title,
       description: values.description.trim() ? values.description.trim() : null,
       priorityId:
@@ -237,9 +310,26 @@ export function TaskEditDialog({
       startAt,
       endAt,
       allDay: values.allDay,
-      // A reminder is always a specific instant (never all-day).
-      remindAt: toIsoUtc(values.remindAt, false),
-    });
+      // A recurring reminder derives its instants from the rule, so `remindAt`
+      // is cleared; otherwise a reminder keeps its one-shot instant.
+      remindAt: rulePresent ? null : toIsoUtc(values.remindAt, false),
+    };
+
+    // Only reminders carry recurrence. When a rule is present, send it; when a
+    // reminder has no rule, clear any prior recurrence so it reverts to one-shot.
+    if (isReminder) {
+      const interval = values.recurrenceInterval.trim();
+      payload.recurrenceDays = rulePresent
+        ? [...values.recurrenceDays].sort((a, b) => a - b)
+        : [];
+      payload.recurrenceTimeMinutes = rulePresent
+        ? timeValueToMinutes(values.recurrenceTime)
+        : null;
+      payload.recurrenceInterval =
+        rulePresent && interval !== "" ? Number(interval) : null;
+    }
+
+    const succeeded = await onSubmit(payload);
     if (succeeded) {
       setOpen(false);
     }
@@ -484,13 +574,107 @@ export function TaskEditDialog({
                   <FormItem>
                     <FormLabel>Reminder</FormLabel>
                     <FormControl>
-                      <Input type="datetime-local" {...field} />
+                      <Input
+                        type="datetime-local"
+                        disabled={recurrenceActive}
+                        {...field}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
             </div>
+
+            {/* Recurrence — only for reminders. Empty rule = one-shot reminder. */}
+            {isReminderType ? (
+              <div className="grid gap-3 rounded-md border p-3">
+                <p className="text-sm font-medium">Repeat</p>
+                <p className="text-xs text-muted-foreground">
+                  Pick days or set an interval to make this reminder recur. Leave
+                  empty for a one-time reminder.
+                </p>
+                <FormField
+                  control={form.control}
+                  name="recurrenceDays"
+                  render={({ field }) => {
+                    const selected = field.value;
+                    const toggleDay = (value: number) =>
+                      field.onChange(
+                        selected.includes(value)
+                          ? selected.filter((d) => d !== value)
+                          : [...selected, value],
+                      );
+                    return (
+                      <FormItem>
+                        <FormLabel>Days of the week</FormLabel>
+                        <div
+                          role="group"
+                          aria-label="Days of the week"
+                          className="flex flex-wrap gap-2"
+                        >
+                          {WEEKDAYS.map((day) => {
+                            const active = selected.includes(day.value);
+                            return (
+                              <button
+                                key={day.value}
+                                type="button"
+                                aria-pressed={active}
+                                aria-label={day.label}
+                                onClick={() => toggleDay(day.value)}
+                                className={cn(
+                                  "inline-flex size-11 items-center justify-center rounded-md border text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                                  active
+                                    ? "border-primary bg-primary text-primary-foreground"
+                                    : "border-border bg-background hover:bg-accent",
+                                )}
+                              >
+                                {day.label.charAt(0)}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    );
+                  }}
+                />
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <FormField
+                    control={form.control}
+                    name="recurrenceTime"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Time of day</FormLabel>
+                        <FormControl>
+                          <Input type="time" {...field} />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={form.control}
+                    name="recurrenceInterval"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Every N days (optional)</FormLabel>
+                        <FormControl>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={365}
+                            placeholder="e.g. 3"
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              </div>
+            ) : null}
 
           </form>
         </Form>

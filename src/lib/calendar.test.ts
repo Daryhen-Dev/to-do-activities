@@ -21,10 +21,12 @@ import {
   filterHabitLayer,
   filterVisibleEvents,
   parseHabitMarkerId,
+  toReminderOccurrenceCalendarEvents,
   type CalendarEvent,
   type ScheduledItemWithCategory,
 } from "./calendar";
 import type { HabitOccurrenceDTO } from "./habits";
+import type { ReminderOccurrenceDTO } from "./reminders";
 import { CATEGORY_COLOR_PALETTE, resolveCategoryColor } from "./category-color";
 import fc from "fast-check";
 
@@ -1249,5 +1251,57 @@ describe("parseHabitMarkerId", () => {
     expect(parseHabitMarkerId("just-an-id")).toBeNull();
     expect(parseHabitMarkerId("h1:not-a-date")).toBeNull();
     expect(parseHabitMarkerId(":2026-07-20")).toBeNull();
+  });
+});
+
+
+describe("toReminderOccurrenceCalendarEvents", () => {
+  function makeReminderOccurrence(
+    over: Partial<ReminderOccurrenceDTO> = {},
+  ): ReminderOccurrenceDTO {
+    return {
+      reminderId: "r-1",
+      title: "Stand up",
+      description: null,
+      itemTypeId: "it-recordatorio",
+      date: "2026-07-20",
+      timeMinutes: 540,
+      categoryId: "cat-1",
+      categoryName: "Work",
+      categoryColor: "#123456",
+      ...over,
+    };
+  }
+
+  it("maps a timed occurrence to a kind=reminder point event", () => {
+    const [event] = toReminderOccurrenceCalendarEvents([makeReminderOccurrence()]);
+    expect(event.kind).toBe("reminder");
+    expect(event.endAt).toBeNull();
+    expect(event.allDay).toBe(false);
+    expect(event.startAt.getTime()).toBe(new Date(2026, 6, 20, 9, 0).getTime());
+    expect(event.id).toBe("r-1:2026-07-20");
+    expect(event.completed).toBeUndefined();
+    expect(event.color).toBe("#123456");
+  });
+
+  it("maps a no-time occurrence to an all-day marker", () => {
+    const [event] = toReminderOccurrenceCalendarEvents([
+      makeReminderOccurrence({ timeMinutes: null }),
+    ]);
+    expect(event.allDay).toBe(true);
+    expect(event.startAt.getTime()).toBe(new Date(2026, 6, 20).getTime());
+  });
+
+  it("drops occurrences with an unparseable date", () => {
+    const events = toReminderOccurrenceCalendarEvents([
+      makeReminderOccurrence({ reminderId: "ok", date: "2026-07-20" }),
+      makeReminderOccurrence({ reminderId: "bad", date: "nope" }),
+    ]);
+    expect(events.map((e) => e.id)).toEqual(["ok:2026-07-20"]);
+  });
+
+  it("is hidden by filterReminderLayer (rides the reminder toggle)", () => {
+    const events = toReminderOccurrenceCalendarEvents([makeReminderOccurrence()]);
+    expect(filterReminderLayer(events, true)).toEqual([]);
   });
 });

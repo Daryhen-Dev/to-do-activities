@@ -355,6 +355,51 @@ export async function listNotesByUser(
 }
 
 /**
+ * The user's RECURRING reminders: live `recordatorio` items that carry a
+ * recurrence rule (a non-empty `recurrenceDays` OR a non-null
+ * `recurrenceInterval`), each enriched with its owning category. One-shot
+ * reminders (no rule) are excluded — they keep flowing through `listDueReminders`
+ * / `listRemindersForUser`. Joins `List → Category` and flattens to
+ * `ScheduledItemWithCategory` so no Prisma relation shape leaks. This is the only
+ * place recurring reminders are read for the bell + calendar layer.
+ */
+export async function listRecurringReminders(
+  userId: string,
+): Promise<ScheduledItemWithCategory[]> {
+  const rows = await prisma.planningItem.findMany({
+    where: {
+      userId,
+      deletedAt: null,
+      archived: false,
+      itemType: { key: "recordatorio" },
+      OR: [
+        { recurrenceDays: { isEmpty: false } },
+        { recurrenceInterval: { not: null } },
+      ],
+      list: {
+        deletedAt: null,
+        category: { userId, deletedAt: null },
+      },
+    },
+    include: {
+      list: {
+        select: {
+          category: { select: { id: true, name: true, color: true } },
+        },
+      },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  return rows.map(({ list, ...item }) => ({
+    ...item,
+    categoryId: list.category.id,
+    categoryName: list.category.name,
+    categoryColor: list.category.color,
+  }));
+}
+
+/**
  * The user's habits (item type `habito`) that are live (not deleted, not
  * archived), each enriched with its owning category (the section) and its
  * `HabitCompletion` rows — the data source for the Habits view and its adherence

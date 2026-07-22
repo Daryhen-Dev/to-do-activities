@@ -1,6 +1,7 @@
 import type { PlanningItem } from "@prisma/client";
 import { resolveCategoryColor } from "./category-color";
 import type { HabitOccurrenceDTO } from "./habits";
+import type { ReminderOccurrenceDTO } from "./reminders";
 
 /**
  * Pure calendar logic — grid construction, range windows, and event bucketing.
@@ -365,6 +366,53 @@ export function filterHabitLayer(
 ): CalendarEvent[] {
   if (!hidden) return events;
   return events.filter((event) => event.kind !== "habit");
+}
+
+/**
+ * Maps expanded recurring-reminder occurrence DTOs into `kind: "reminder"`
+ * point markers (anchored at date+timeMinutes, or all-day at 00:00 when null),
+ * so they join the reminder layer and inherit its toggle + category filtering.
+ * `id` is `"{reminderId}:{date}"`. DTOs with an unparseable `date` are dropped.
+ * The client builds the `Date` here so all timezone-sensitive construction stays
+ * local. Unlike habit markers, reminder occurrences carry no `completed` flag.
+ */
+export function toReminderOccurrenceCalendarEvents(
+  rows: ReminderOccurrenceDTO[],
+): CalendarEvent[] {
+  const events: CalendarEvent[] = [];
+  for (const row of rows) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(row.date);
+    if (!match) continue;
+    const [, y, m, d] = match;
+    const year = Number(y);
+    const month = Number(m) - 1;
+    const day = Number(d);
+    const allDay = row.timeMinutes == null;
+    const startAt = allDay
+      ? new Date(year, month, day)
+      : new Date(
+          year,
+          month,
+          day,
+          Math.floor(row.timeMinutes! / 60),
+          row.timeMinutes! % 60,
+        );
+    if (Number.isNaN(startAt.getTime())) continue;
+    events.push({
+      id: `${row.reminderId}:${row.date}`,
+      title: row.title,
+      startAt,
+      endAt: null,
+      allDay,
+      kind: "reminder",
+      description: row.description ?? null,
+      itemTypeId: row.itemTypeId,
+      categoryId: row.categoryId,
+      categoryName: row.categoryName,
+      color: resolveCategoryColor(row.categoryColor, row.categoryId),
+    });
+  }
+  return events;
 }
 
 /**
