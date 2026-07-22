@@ -295,7 +295,7 @@ export function HabitFormDialog({
                           aria-label={day.label}
                           onClick={() => toggle(day.value)}
                           className={cn(
-                            "inline-flex size-11 items-center justify-center rounded-md border text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            "inline-flex size-11 touch-manipulation items-center justify-center rounded-md border text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                             active
                               ? "border-primary bg-primary text-primary-foreground"
                               : "border-border bg-background hover:bg-accent",

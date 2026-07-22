@@ -111,7 +111,10 @@ export function HabitCard({
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
         <span className="inline-flex items-center gap-1">
-          <Flame className={cn("size-3.5", habit.streak > 0 && "text-orange-500")} />
+          <Flame
+            aria-hidden
+            className={cn("size-3.5", habit.streak > 0 && "text-orange-500")}
+          />
           <span className="tabular-nums">{habit.streak}</span>
           day streak
         </span>
@@ -130,7 +133,7 @@ export function HabitCard({
           onClick={() => onToggleToday(habit)}
           className="min-h-11 w-full justify-center sm:w-auto sm:self-start"
         >
-          <Check />
+          <Check aria-hidden />
           {habit.completedToday ? "Done today" : "Mark today done"}
         </Button>
       ) : (
